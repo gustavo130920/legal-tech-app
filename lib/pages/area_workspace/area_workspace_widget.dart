@@ -24,6 +24,8 @@ class AreaWorkspaceWidget extends StatefulWidget {
 
   static String routeName = 'AreaWorkspace';
   static String routePath = '/areaWorkspace';
+  
+  static String? currentSelectedPeca;
 
   @override
   State<AreaWorkspaceWidget> createState() => _AreaWorkspaceWidgetState();
@@ -91,14 +93,17 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
 
-    safeSetState(() => _isLoadingData = true);
+    safeSetState(() {
+      _isLoadingData = true;
+    });
 
     try {
       final pecasResponse = await Supabase.instance.client
           .from('pecas')
           .select('peca_name')
           .eq('user_id', user.id)
-          .eq('area_name', globalCurrentArea);
+          .eq('area_name', globalCurrentArea)
+          .order('id', ascending: true);
 
       final List<String> loadedPecas = (pecasResponse as List)
           .map((item) => item['peca_name'].toString())
@@ -106,19 +111,17 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
 
       final currentAreaMap = globalAreaDatabase[globalCurrentArea];
       if (currentAreaMap != null) {
+        currentAreaMap['pecas'] = <String>[];
         final List<String> currentPecas = (currentAreaMap['pecas'] as List).cast<String>();
-        for (var p in loadedPecas) {
-          if (!currentPecas.contains(p)) {
-            currentPecas.add(p);
-          }
-        }
+        currentPecas.addAll(loadedPecas);
       }
 
       final topicsResponse = await Supabase.instance.client
           .from('topics')
           .select()
           .eq('user_id', user.id)
-          .eq('area_name', globalCurrentArea);
+          .eq('area_name', globalCurrentArea)
+          .order('id', ascending: true);
 
       final List<Map<String, dynamic>> loadedTopics = (topicsResponse as List).map((item) {
         return {
@@ -136,8 +139,14 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       }
 
       if (currentAreaMap != null && (currentAreaMap['pecas'] as List).isNotEmpty) {
-        _selectedPeca = (currentAreaMap['pecas'] as List).first;
+        if (!loadedPecas.contains(_selectedPeca)) {
+          _selectedPeca = loadedPecas.first;
+        }
+      } else {
+        _selectedPeca = null;
       }
+      
+      AreaWorkspaceWidget.currentSelectedPeca = _selectedPeca;
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro ao sincronizar nuvem: $e'), backgroundColor: Colors.red),
@@ -149,8 +158,10 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
   }
 
   void _changePeca(String newPeca) {
+    if (_selectedPeca == newPeca) return;
     safeSetState(() {
       _selectedPeca = newPeca;
+      AreaWorkspaceWidget.currentSelectedPeca = newPeca;
       selectedTopics.clear();
       _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
       _dynamicControllers.clear();
@@ -173,6 +184,8 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
           ),
           content: TextField(
             controller: pecaController,
+            autofocus: true,
+            onSubmitted: (_) => _submitAddPeca(pecaController.text),
             decoration: InputDecoration(
               hintText: 'Ex: Réplica, Procuração, Recurso...',
               hintStyle: FlutterFlowTheme.of(context).bodyMedium.override(
@@ -201,33 +214,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
               child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
             ),
             ElevatedButton(
-              onPressed: () async {
-                if (pecaController.text.trim().isNotEmpty) {
-                  final newPecaName = pecaController.text.trim().toUpperCase();
-                  final user = Supabase.instance.client.auth.currentUser;
-
-                  if (user != null) {
-                    try {
-                      await Supabase.instance.client.from('pecas').insert({
-                        'user_id': user.id,
-                        'area_name': globalCurrentArea,
-                        'peca_name': newPecaName,
-                      });
-                      
-                      safeSetState(() {
-                        (globalAreaDatabase[globalCurrentArea]['pecas'] as List).add(newPecaName);
-                        _changePeca(newPecaName);
-                      });
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça criada com sucesso!'), backgroundColor: Colors.green));
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao salvar peça: $e'), backgroundColor: Colors.red));
-                    }
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Usuário não logado!'), backgroundColor: Colors.red));
-                  }
-                }
-              },
+              onPressed: () => _submitAddPeca(pecaController.text),
               style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
               child: const Text('Criar', style: TextStyle(color: Colors.white)),
             ),
@@ -235,6 +222,304 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         );
       },
     );
+  }
+
+  Future<void> _submitAddPeca(String nameRaw) async {
+    if (nameRaw.trim().isEmpty) return;
+    final newPecaName = nameRaw.trim().toUpperCase();
+    final user = Supabase.instance.client.auth.currentUser;
+
+    if (user != null) {
+      try {
+        await Supabase.instance.client.from('pecas').insert({
+          'user_id': user.id,
+          'area_name': globalCurrentArea,
+          'peca_name': newPecaName,
+        });
+        
+        safeSetState(() {
+          (globalAreaDatabase[globalCurrentArea]['pecas'] as List).add(newPecaName);
+          _changePeca(newPecaName);
+        });
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça criada com sucesso!'), backgroundColor: Colors.green));
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao salvar peça: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  void _showEditPecaDialog(String oldName) {
+    final TextEditingController pecaController = TextEditingController(text: oldName);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+          title: Text(
+            'Editar Peça',
+            style: FlutterFlowTheme.of(context).titleMedium.override(
+                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                  color: FlutterFlowTheme.of(context).primaryText,
+                ),
+          ),
+          content: TextField(
+            controller: pecaController,
+            autofocus: true,
+            onSubmitted: (_) => _submitEditPeca(oldName, pecaController.text),
+            decoration: InputDecoration(
+              hintText: 'Novo nome da peça',
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
+                borderRadius: BorderRadius.circular(8.0),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
+                borderRadius: BorderRadius.circular(8.0),
+              ),
+              filled: true,
+              fillColor: FlutterFlowTheme.of(context).primaryBackground,
+            ),
+            style: FlutterFlowTheme.of(context).bodyMedium.override(
+                  font: GoogleFonts.inter(),
+                  color: FlutterFlowTheme.of(context).primaryText,
+                ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+            ),
+            ElevatedButton(
+              onPressed: () => _submitEditPeca(oldName, pecaController.text),
+              style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
+              child: const Text('Salvar', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _submitEditPeca(String oldName, String newNameRaw) async {
+    final newName = newNameRaw.trim().toUpperCase();
+    if (newName.isEmpty || newName == oldName) {
+      Navigator.pop(context);
+      return;
+    }
+
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await Supabase.instance.client.from('pecas').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
+      await Supabase.instance.client.from('topics').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
+
+      safeSetState(() {
+        final pecasList = (globalAreaDatabase[globalCurrentArea]['pecas'] as List);
+        final idx = pecasList.indexOf(oldName);
+        if (idx != -1) pecasList[idx] = newName;
+
+        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
+        for (var t in topicsList) {
+          if (t['peca'] == oldName) t['peca'] = newName;
+        }
+
+        if (_selectedPeca == oldName) {
+          _selectedPeca = newName;
+          AreaWorkspaceWidget.currentSelectedPeca = newName;
+        }
+      });
+
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça renomeada com sucesso!'), backgroundColor: Colors.green));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao renomear peça: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  Future<void> _deletePeca(String pecaName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: Text('Excluir Peça', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
+        content: Text('Tem certeza que deseja excluir "$pecaName"? Todos os tópicos desta peça também serão apagados.', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Excluir', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await Supabase.instance.client.from('topics').delete().eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', pecaName);
+      await Supabase.instance.client.from('pecas').delete().eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', pecaName);
+
+      safeSetState(() {
+        (globalAreaDatabase[globalCurrentArea]['pecas'] as List).remove(pecaName);
+        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
+        topicsList.removeWhere((t) => t['peca'] == pecaName);
+
+        final remainingPecas = (globalAreaDatabase[globalCurrentArea]['pecas'] as List).cast<String>();
+        if (_selectedPeca == pecaName) {
+          _selectedPeca = remainingPecas.isNotEmpty ? remainingPecas.first : null;
+          AreaWorkspaceWidget.currentSelectedPeca = _selectedPeca;
+          selectedTopics.clear();
+          _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
+          _dynamicControllers.clear();
+        }
+      });
+      _updateDynamicFields();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça excluída com sucesso!'), backgroundColor: Colors.green));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir peça: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  void _showEditTopicDialog(Map<String, dynamic> topic) {
+    final titleCtrl = TextEditingController(text: topic['title']);
+    final contentCtrl = TextEditingController(text: topic['content']);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+          title: Text(
+            'Editar Tópico',
+            style: FlutterFlowTheme.of(context).titleMedium.override(
+                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                  color: FlutterFlowTheme.of(context).primaryText,
+                ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleCtrl,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Título do Tópico',
+                    labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
+                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate)),
+                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary)),
+                  ),
+                  style: TextStyle(color: FlutterFlowTheme.of(context).primaryText),
+                ),
+                const SizedBox(height: 16.0),
+                TextField(
+                  controller: contentCtrl,
+                  maxLines: 6,
+                  decoration: InputDecoration(
+                    labelText: 'Conteúdo do Modelo',
+                    labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
+                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate)),
+                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary)),
+                  ),
+                  style: TextStyle(color: FlutterFlowTheme.of(context).primaryText),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+            ),
+            ElevatedButton(
+              onPressed: () => _submitEditTopic(topic['id'], titleCtrl.text, contentCtrl.text),
+              style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
+              child: const Text('Salvar', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _submitEditTopic(int id, String titleRaw, String contentRaw) async {
+    final title = titleRaw.trim();
+    final content = contentRaw.trim();
+
+    if (title.isEmpty || content.isEmpty) return;
+
+    try {
+      final regex = RegExp(r'\{\{(.*?)\}\}');
+      final matches = regex.allMatches(content);
+      final extractedVars = matches.map((m) => m.group(1)!.trim()).toSet().toList();
+      final previewText = content.length > 40 ? '${content.substring(0, 40)}...' : content;
+
+      await Supabase.instance.client.from('topics').update({
+        'title': title,
+        'content': content,
+        'preview': previewText,
+        'variables': extractedVars,
+      }).eq('id', id);
+
+      safeSetState(() {
+        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
+        final idx = topicsList.indexWhere((t) => t['id'] == id);
+        if (idx != -1) {
+          topicsList[idx]['title'] = title;
+          topicsList[idx]['content'] = content;
+          topicsList[idx]['preview'] = previewText;
+          topicsList[idx]['variables'] = extractedVars;
+        }
+        _updateDynamicFields();
+      });
+
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico atualizado com sucesso!'), backgroundColor: Colors.green));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar tópico: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  Future<void> _deleteTopic(int topicId, String topicTitle) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: Text('Excluir Tópico', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
+        content: Text('Tem certeza que deseja excluir "$topicTitle"?', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Excluir', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await Supabase.instance.client.from('topics').delete().eq('id', topicId);
+
+      safeSetState(() {
+        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
+        topicsList.removeWhere((t) => t['id'] == topicId);
+        selectedTopics.remove(topicId);
+        _updateDynamicFields();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico excluído com sucesso!'), backgroundColor: Colors.green));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir tópico: $e'), backgroundColor: Colors.red));
+    }
   }
 
   void _updateDynamicFields() {
@@ -280,12 +565,30 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     });
   }
 
+  String _applyVariables(String content, String cliente, String reu, String processo, String enderecamento) {
+    String parsed = content;
+    parsed = parsed.replaceAll('{{NOME_CLIENTE}}', cliente);
+    parsed = parsed.replaceAll('{{nome_cliente}}', cliente);
+    parsed = parsed.replaceAll('{{REU}}', reu);
+    parsed = parsed.replaceAll('{{reu_destinatario}}', reu);
+    parsed = parsed.replaceAll('{{PROCESSO}}', processo);
+    parsed = parsed.replaceAll('{{numero_processo}}', processo);
+    parsed = parsed.replaceAll('{{ENDEREÇAMENTO}}', enderecamento);
+    parsed = parsed.replaceAll('{{endereçamento}}', enderecamento);
+    parsed = parsed.replaceAll('{{CPF}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
+    parsed = parsed.replaceAll('{{cpf}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
+
+    _dynamicControllers.forEach((key, controller) {
+      parsed = parsed.replaceAll('{{$key}}', controller.text.isNotEmpty ? controller.text : '{{$key}}');
+    });
+    return parsed;
+  }
+
   String _generateDocumentPreview() {
     String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
     String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
     String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
     String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
-    String pecaNome = _selectedPeca ?? 'PETIÇÃO';
 
     String documentHeader = '''EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.
 
@@ -306,27 +609,7 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
     for (var topicId in selectedTopics) {
       final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
       if (topic.isNotEmpty && topic['content'] != null) {
-        String parsedContent = topic['content'];
-
-        parsedContent = parsedContent.replaceAll('{{NOME_CLIENTE}}', cliente);
-        parsedContent = parsedContent.replaceAll('{{nome_cliente}}', cliente);
-        
-        parsedContent = parsedContent.replaceAll('{{REU}}', reu);
-        parsedContent = parsedContent.replaceAll('{{reu_destinatario}}', reu);
-        
-        parsedContent = parsedContent.replaceAll('{{PROCESSO}}', processo);
-        parsedContent = parsedContent.replaceAll('{{numero_processo}}', processo);
-
-        parsedContent = parsedContent.replaceAll('{{ENDEREÇAMENTO}}', enderecamento);
-        parsedContent = parsedContent.replaceAll('{{endereçamento}}', enderecamento);
-
-        parsedContent = parsedContent.replaceAll('{{CPF}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
-        parsedContent = parsedContent.replaceAll('{{cpf}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
-
-        _dynamicControllers.forEach((key, controller) {
-          parsedContent = parsedContent.replaceAll('{{$key}}', controller.text.isNotEmpty ? controller.text : '{{$key}}');
-        });
-
+        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
         String topicTitle = topic['title'].toString().toUpperCase();
         fullDocument += '\n$topicTitle\n\n$parsedContent\n';
       }
@@ -335,84 +618,250 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
     return fullDocument.trim();
   }
 
+  // Gera HTML estritamente limpo com parágrafos formais (<p style="...">) para evitar desconfigurações
+  String _generateHtmlContent() {
+    String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
+    String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
+    String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
+    String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
+
+    const pStyle = "font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; margin: 0 0 12pt 0; line-height: 1.15;";
+    const boldStyle = "font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; margin: 12pt 0 6pt 0; line-height: 1.15; font-weight: bold;";
+
+    String htmlContent = '''
+      <div style="font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;">
+        <p style="$pStyle">EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.</p>
+        <p style="$pStyle">Processo nº. &nbsp; $processo</p>
+        <p style="$pStyle">$reu, por seus advogados e procuradores infra-assinados, nos autos da ação trabalhista em epígrafe, movida por $cliente, inconformada com a r. decisão proferida por este douto Juízo, vem, respeitosamente, à presença de Vossa Excelência, com fulcro no artigo 895, inciso I da Consolidação das Leis do Trabalho, interpor.</p>
+    ''';
+
+    if (selectedTopics.isEmpty) {
+      htmlContent += '</div>';
+      return htmlContent;
+    }
+
+    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
+    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
+    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
+    
+    for (var topicId in selectedTopics) {
+      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
+      if (topic.isNotEmpty && topic['content'] != null) {
+        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
+        String topicTitle = topic['title'].toString().toUpperCase();
+        
+        List<String> paragraphs = parsedContent.split('\n');
+        String formattedParagraphs = paragraphs
+            .where((p) => p.trim().isNotEmpty)
+            .map((p) => '<p style="$pStyle">${p.trim()}</p>')
+            .join('');
+
+        htmlContent += '''
+          <p style="$boldStyle"><b>$topicTitle</b></p>
+          $formattedParagraphs
+        ''';
+      }
+    }
+
+    htmlContent += '</div>';
+    return htmlContent;
+  }
+
+  void _copyToClipboardAsHtml() {
+    if (selectedTopics.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de copiar.')));
+      return;
+    }
+
+    final htmlContent = _generateHtmlContent();
+    final plainText = _generateDocumentPreview();
+
+    final textArea = html.TextAreaElement()
+      ..value = plainText
+      ..style.position = 'fixed'
+      ..style.left = '-9999px'
+      ..style.top = '0';
+      
+    html.document.body?.append(textArea);
+    textArea.focus();
+    textArea.select();
+
+    void onCopy(html.Event e) {
+      final clipboardEvent = e as html.ClipboardEvent;
+      clipboardEvent.clipboardData?.setData('text/html', htmlContent);
+      clipboardEvent.clipboardData?.setData('text/plain', plainText);
+      e.preventDefault(); 
+    }
+
+    html.document.addEventListener('copy', onCopy);
+    bool result = html.document.execCommand('copy');
+    
+    html.document.removeEventListener('copy', onCopy);
+    textArea.remove();
+
+    if (result) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Documento copiado com formatação perfeita! Cole no Word ou Docs.')),
+      );
+    } else {
+      Clipboard.setData(ClipboardData(text: plainText));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Copiado em formato simples (navegador bloqueou formatação).')),
+      );
+    }
+  }
+
+  Widget _buildRichDocumentPreview() {
+    String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
+    String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
+    String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
+    String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
+
+    final baseStyle = FlutterFlowTheme.of(context).bodySmall.override(
+      font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText, lineHeight: 1.5,
+    );
+    final boldStyle = FlutterFlowTheme.of(context).bodySmall.override(
+      font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText, lineHeight: 1.5,
+    );
+
+    List<TextSpan> spans = [
+      TextSpan(text: 'EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.\n\n', style: baseStyle),
+      TextSpan(text: 'Processo nº.   $processo\n\n', style: baseStyle),
+      TextSpan(text: '$reu, por seus advogados e procuradores infra-assinados, nos autos da ação trabalhista em epígrafe, movida por $cliente, inconformada com a r. decisão proferida por este douto Juízo, vem, respeitosamente, à presença de Vossa Excelência, com fulcro no artigo 895, inciso I da Consolidação das Leis do Trabalho, interpor.\n', style: baseStyle),
+    ];
+
+    if (selectedTopics.isEmpty) {
+      return RichText(text: TextSpan(children: spans));
+    }
+
+    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
+    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
+    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
+    
+    for (var topicId in selectedTopics) {
+      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
+      if (topic.isNotEmpty && topic['content'] != null) {
+        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
+        String topicTitle = topic['title'].toString().toUpperCase();
+        
+        spans.add(TextSpan(text: '\n$topicTitle\n', style: boldStyle));
+        spans.add(TextSpan(text: '$parsedContent\n', style: baseStyle));
+      }
+    }
+
+    return RichText(text: TextSpan(children: spans));
+  }
+
+  void _downloadAsDoc() {
+    if (selectedTopics.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de gerar o documento.')));
+      return;
+    }
+    final htmlContent = _generateHtmlContent();
+    final docHtml = '''
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset='utf-8'></head>
+      <body>$htmlContent</body>
+      </html>
+    ''';
+    try {
+      final bytes = utf8.encode(docHtml);
+      final base64Str = base64Encode(bytes);
+      final url = 'data:application/msword;base64,$base64Str';
+      html.AnchorElement(href: url)
+        ..setAttribute('download', '${_selectedPeca?.replaceAll(' ', '_')}.doc')
+        ..click();
+    } catch (e) {}
+  }
+
   Widget _buildPecaCard(String name) {
     final isSelected = _selectedPeca == name;
 
-    return InkWell(
-      onTap: () => _changePeca(name),
-      splashColor: Colors.transparent,
-      highlightColor: Colors.transparent,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        decoration: BoxDecoration(
-          color: FlutterFlowTheme.of(context).primaryBackground,
-          borderRadius: BorderRadius.circular(12.0),
-          border: Border.all(
-            color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-            width: isSelected ? 1.5 : 1.0,
-          ),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      decoration: BoxDecoration(
+        color: FlutterFlowTheme.of(context).primaryBackground,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(
+          color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
+          width: isSelected ? 1.5 : 1.0,
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 20.0, height: 20.0,
-                decoration: BoxDecoration(
-                  color: isSelected ? FlutterFlowTheme.of(context).primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4.0),
-                  border: Border.all(
-                    color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-                    width: 1.5,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: isSelected ? const Icon(Icons.check_rounded, color: Colors.white, size: 14.0) : null,
-              ),
-              const SizedBox(width: 12.0),
-              Text(
-                name,
-                style: FlutterFlowTheme.of(context).labelMedium.override(
-                      font: GoogleFonts.inter(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500),
-                      color: isSelected ? FlutterFlowTheme.of(context).primaryText : FlutterFlowTheme.of(context).secondaryText,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            InkWell(
+              onTap: () => _changePeca(name),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 20.0, height: 20.0,
+                    decoration: BoxDecoration(
+                      color: isSelected ? FlutterFlowTheme.of(context).primary : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4.0),
+                      border: Border.all(
+                        color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
+                        width: 1.5,
+                      ),
                     ),
+                    alignment: Alignment.center,
+                    child: isSelected ? const Icon(Icons.check_rounded, color: Colors.white, size: 14.0) : null,
+                  ),
+                  const SizedBox(width: 8.0),
+                  Text(
+                    name,
+                    style: FlutterFlowTheme.of(context).labelMedium.override(
+                          font: GoogleFonts.inter(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500),
+                          color: isSelected ? FlutterFlowTheme.of(context).primaryText : FlutterFlowTheme.of(context).secondaryText,
+                        ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8.0),
+            InkWell(
+              onTap: () => _showEditPecaDialog(name),
+              child: Icon(Icons.edit_outlined, size: 16.0, color: FlutterFlowTheme.of(context).secondaryText),
+            ),
+            const SizedBox(width: 6.0),
+            InkWell(
+              onTap: () => _deletePeca(name),
+              child: const Icon(Icons.delete_outline_rounded, size: 16.0, color: Colors.redAccent),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTopicCard({
-    required int id,
-    required String title,
-    required String preview,
-  }) {
+  Widget _buildTopicCard(Map<String, dynamic> topic) {
+    final id = topic['id'] as int;
+    final title = topic['title'] as String;
+    final preview = topic['preview'] as String;
     final isSelected = selectedTopics.contains(id);
 
-    return InkWell(
-      onTap: () => _toggleTopic(id),
-      splashColor: Colors.transparent,
-      highlightColor: Colors.transparent,
-      child: Container(
-        decoration: BoxDecoration(
-          color: FlutterFlowTheme.of(context).secondaryBackground,
-          borderRadius: BorderRadius.circular(12.0),
-          border: Border.all(
-            color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-            width: isSelected ? 1.5 : 1.0,
-          ),
+    return Container(
+      decoration: BoxDecoration(
+        color: FlutterFlowTheme.of(context).secondaryBackground,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(
+          color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
+          width: isSelected ? 1.5 : 1.0,
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisSize: MainAxisSize.max,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          mainAxisSize: MainAxisSize.max,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            InkWell(
+              onTap: () => _toggleTopic(id),
+              child: Container(
                 width: 22.0, height: 22.0,
                 decoration: BoxDecoration(
                   color: isSelected ? FlutterFlowTheme.of(context).primary : Colors.transparent,
@@ -425,8 +874,11 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                 alignment: Alignment.center,
                 child: isSelected ? const Icon(Icons.check_rounded, color: Colors.white, size: 14.0) : null,
               ),
-              const SizedBox(width: 16.0),
-              Expanded(
+            ),
+            const SizedBox(width: 16.0),
+            Expanded(
+              child: InkWell(
+                onTap: () => _toggleTopic(id),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -449,8 +901,23 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 18.0),
+                  color: FlutterFlowTheme.of(context).secondaryText,
+                  onPressed: () => _showEditTopicDialog(topic),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18.0),
+                  color: Colors.redAccent,
+                  onPressed: () => _deleteTopic(id, title),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -797,7 +1264,7 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                                   ...dynamicTopics.map((topic) {
                                     return Padding(
                                       padding: const EdgeInsets.only(bottom: 8.0),
-                                      child: _buildTopicCard(id: topic['id'], title: topic['title'], preview: topic['preview']),
+                                      child: _buildTopicCard(topic),
                                     );
                                   }).toList(),
                               ],
@@ -843,11 +1310,7 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                                             ),
                                           ),
                                           InkWell(
-                                            onTap: () async {
-                                              String clipboardText = _generateDocumentPreview();
-                                              await Clipboard.setData(ClipboardData(text: clipboardText));
-                                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento copiado com sucesso!')));
-                                            },
+                                            onTap: () => _copyToClipboardAsHtml(),
                                             child: Container(
                                               decoration: BoxDecoration(
                                                 color: FlutterFlowTheme.of(context).primaryBackground,
@@ -874,12 +1337,7 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                                       ),
                                       Divider(height: 16.0, thickness: 1.0, color: FlutterFlowTheme.of(context).alternate),
                                       const SizedBox(height: 8.0),
-                                      Text(
-                                        _generateDocumentPreview(), 
-                                        style: FlutterFlowTheme.of(context).bodySmall.override(
-                                              font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText, lineHeight: 1.5,
-                                            ),
-                                      ),
+                                      _buildRichDocumentPreview(),
                                     ],
                                   ),
                                 ),
@@ -913,21 +1371,7 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
                               Text('.docx', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText)),
                               const SizedBox(width: 24.0),
                               InkWell(
-                                onTap: () {
-                                  if (selectedTopics.isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de gerar o documento.')));
-                                    return;
-                                  }
-                                  String docText = _generateDocumentPreview();
-                                  try {
-                                    final bytes = utf8.encode(docText);
-                                    final base64Str = base64Encode(bytes);
-                                    final url = 'data:application/msword;base64,$base64Str';
-                                    html.AnchorElement(href: url)
-                                      ..setAttribute('download', '${_selectedPeca?.replaceAll(' ', '_')}.doc')
-                                      ..click();
-                                  } catch (e) {}
-                                },
+                                onTap: () => _downloadAsDoc(),
                                 child: Container(
                                   decoration: BoxDecoration(color: FlutterFlowTheme.of(context).primary, borderRadius: BorderRadius.circular(8.0)),
                                   padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),

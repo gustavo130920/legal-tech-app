@@ -28,7 +28,7 @@ class _RegisterWidgetState extends State<RegisterWidget> {
 
   bool _acceptTerms = false;
   bool _passwordVisibility = false;
-  bool _isLoading = false; 
+  bool _isLoading = false;
 
   late TextEditingController _nameController;
   late TextEditingController _emailController;
@@ -58,6 +58,8 @@ class _RegisterWidgetState extends State<RegisterWidget> {
     required IconData icon,
     required TextEditingController controller,
     bool isPassword = false,
+    TextInputAction? textInputAction,
+    Function(String)? onFieldSubmitted,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -75,6 +77,8 @@ class _RegisterWidgetState extends State<RegisterWidget> {
         TextFormField(
           controller: controller,
           obscureText: isPassword && !_passwordVisibility,
+          textInputAction: textInputAction,
+          onFieldSubmitted: onFieldSubmitted,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: FlutterFlowTheme.of(context).labelMedium.override(
@@ -114,6 +118,7 @@ class _RegisterWidgetState extends State<RegisterWidget> {
     );
   }
 
+  // AUDITORIA E SEGURANÇA: Validação forte de senha mitigando OWASP A07
   Future<void> _fazerCadastro() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -122,6 +127,39 @@ class _RegisterWidgetState extends State<RegisterWidget> {
     if (name.isEmpty || email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Por favor, preencha todos os campos.')),
+      );
+      return;
+    }
+
+    // Regras de Complexidade de Senha
+    if (password.length < 8) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Segurança: A senha deve ter pelo menos 8 caracteres.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    if (!password.contains(RegExp(r'[A-Z]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 letra maiúscula.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    if (!password.contains(RegExp(r'[a-z]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 letra minúscula.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    if (!password.contains(RegExp(r'[0-9]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 número.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    // Verifica se há pelo menos um caractere que NÃO seja letra ou número
+    if (!password.contains(RegExp(r'[^a-zA-Z0-9]'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 caractere especial (ex: @, #, !, &, etc).'), backgroundColor: Colors.orange),
       );
       return;
     }
@@ -139,7 +177,7 @@ class _RegisterWidgetState extends State<RegisterWidget> {
       final response = await Supabase.instance.client.auth.signUp(
         email: email,
         password: password,
-        data: {'full_name': name}, 
+        data: {'full_name': name},
       );
 
       if (response.user != null) {
@@ -241,6 +279,7 @@ class _RegisterWidgetState extends State<RegisterWidget> {
                                       hint: 'Ex: João Silva',
                                       icon: Icons.person_outline_rounded,
                                       controller: _nameController,
+                                      textInputAction: TextInputAction.next,
                                     ),
                                     const SizedBox(height: 16.0),
                                     _buildCustomInput(
@@ -248,14 +287,17 @@ class _RegisterWidgetState extends State<RegisterWidget> {
                                       hint: 'seu@email.com',
                                       icon: Icons.mail_outline_rounded,
                                       controller: _emailController,
+                                      textInputAction: TextInputAction.next,
                                     ),
                                     const SizedBox(height: 16.0),
                                     _buildCustomInput(
                                       label: 'Senha',
-                                      hint: 'Mínimo 6 caracteres',
+                                      hint: 'Forte (Mín. 8 chars, 1A, 1a, 1@)',
                                       icon: Icons.lock_outline_rounded,
                                       controller: _passwordController,
                                       isPassword: true,
+                                      textInputAction: TextInputAction.done,
+                                      onFieldSubmitted: (_) => _fazerCadastro(),
                                     ),
                                     const SizedBox(height: 16.0),
                                     InkWell(

@@ -9,7 +9,7 @@ import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; 
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main_menu_model.dart';
 export 'main_menu_model.dart';
 
@@ -90,6 +90,11 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
           globalSavedAreas = loadedAreas;
           _savedAreas = Set.from(loadedAreas);
           _selectedAreas = Set.from(loadedAreas);
+        } else {
+          // CORREÇÃO: Limpa a tela caso o usuário logado não tenha nenhuma área salva
+          globalSavedAreas.clear();
+          _savedAreas.clear();
+          _selectedAreas.clear();
         }
       } catch (e) {
         print('Erro ao carregar áreas do Supabase: $e');
@@ -102,6 +107,31 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
       });
     } else {
       safeSetState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+      
+      // CORREÇÃO: Limpeza profunda de RAM ao fazer logout para evitar vazamento de dados entre contas
+      globalSavedAreas.clear();
+      _savedAreas.clear();
+      _selectedAreas.clear();
+      globalCurrentArea = '';
+      
+      globalAreaDatabase.forEach((key, value) {
+        value['pecas'] = <String>[];
+        value['topics'] = <Map<String, dynamic>>[];
+      });
+
+      if (mounted) {
+        context.goNamed(LoginWidget.routeName);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao sair da conta: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -124,13 +154,12 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
     try {
       final areaList = _selectedAreas.toList();
 
-      
       await Supabase.instance.client.from('user_areas').upsert(
         {
           'user_id': user.id,
           'areas': areaList,
         },
-        onConflict: 'user_id', 
+        onConflict: 'user_id',
       );
 
       safeSetState(() {
@@ -340,19 +369,30 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                               ),
                             ].divide(const SizedBox(height: 4.0)),
                           ),
-                          Container(
-                            width: 44.0, height: 44.0,
-                            decoration: BoxDecoration(color: FlutterFlowTheme.of(context).primary, shape: BoxShape.circle),
-                            alignment: const AlignmentDirectional(0.0, 0.0),
-                            child: Text(
-                              _userInitials,
-                              textAlign: TextAlign.center,
-                              style: FlutterFlowTheme.of(context).labelMedium.override(
-                                    font: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                                    color: FlutterFlowTheme.of(context).onPrimary,
-                                    fontSize: 16.72,
-                                  ),
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 44.0, height: 44.0,
+                                decoration: BoxDecoration(color: FlutterFlowTheme.of(context).primary, shape: BoxShape.circle),
+                                alignment: const AlignmentDirectional(0.0, 0.0),
+                                child: Text(
+                                  _userInitials,
+                                  textAlign: TextAlign.center,
+                                  style: FlutterFlowTheme.of(context).labelMedium.override(
+                                        font: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                                        color: FlutterFlowTheme.of(context).onPrimary,
+                                        fontSize: 16.72,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8.0),
+                              IconButton(
+                                tooltip: 'Sair da conta',
+                                icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 22.0),
+                                onPressed: _signOut,
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -414,7 +454,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                                         updateCallback: () => safeSetState(() {}),
                                         child: ButtonWidget(
                                           icon: Icon(Icons.save_rounded, color: FlutterFlowTheme.of(context).primaryText, size: 24.0),
-                                          iconPresent: true, iconEndPresent: false, 
+                                          iconPresent: true, iconEndPresent: false,
                                           content: _isSavingConfig ? 'Salvando...' : 'Salvar Configuração',
                                           variant: 'primary', size: 'medium', fullWidth: true, loading: false, disabled: _isSavingConfig,
                                         ),
@@ -496,7 +536,6 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                               else
                                 ..._savedAreas.map((area) {
                                   final icon = _areaData[area]?['icon'] as IconData? ?? Icons.folder_rounded;
-                                  
                                   final topicsList = globalAreaDatabase[area]?['topics'] as List?;
                                   final int topicCount = topicsList?.length ?? 0;
 

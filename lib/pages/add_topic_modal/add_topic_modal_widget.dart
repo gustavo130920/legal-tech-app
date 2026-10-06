@@ -11,11 +11,12 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; 
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'add_topic_modal_model.dart';
 export 'add_topic_modal_model.dart';
 
 import '../../app_state.dart';
+import '../area_workspace/area_workspace_widget.dart';
 
 class AddTopicModalWidget extends StatefulWidget {
   const AddTopicModalWidget({super.key});
@@ -59,7 +60,13 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     _areaController = FormFieldController<String>(_selectedArea);
 
     final pecasForArea = (globalAreaDatabase[_selectedArea!]['pecas'] as List).cast<String>();
-    _selectedPeca = pecasForArea.isNotEmpty ? pecasForArea.first : null;
+    
+    if (AreaWorkspaceWidget.currentSelectedPeca != null && pecasForArea.contains(AreaWorkspaceWidget.currentSelectedPeca)) {
+      _selectedPeca = AreaWorkspaceWidget.currentSelectedPeca;
+    } else {
+      _selectedPeca = pecasForArea.isNotEmpty ? pecasForArea.first : null;
+    }
+    
     _pecaController = FormFieldController<String>(_selectedPeca);
   }
 
@@ -73,7 +80,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
   }
 
   void _closeModal() {
-    context.safePop(); 
+    context.safePop();
   }
 
   Future<void> _saveTopicToSupabase() async {
@@ -117,10 +124,10 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
       final newTopic = {
         'id': DateTime.now().millisecondsSinceEpoch,
         'title': title,
-        'content': content, 
+        'content': content,
         'preview': previewText,
         'variables': extractedVars,
-        'peca': _selectedPeca, 
+        'peca': _selectedPeca,
       };
       globalAreaDatabase[_selectedArea!]['topics'].add(newTopic);
 
@@ -133,10 +140,8 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
         _contentController.clear();
         _tagsController.clear();
       });
-      
-      
+
       _closeModal();
-      
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro do banco: $e'), backgroundColor: Colors.red),
@@ -151,18 +156,22 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     required TextEditingController controller,
     int maxLines = 1,
     IconData? leadingIcon,
+    TextInputAction? textInputAction,
+    Function(String)? onFieldSubmitted,
   }) {
     return TextFormField(
       controller: controller,
       maxLines: maxLines,
+      textInputAction: textInputAction,
+      onFieldSubmitted: onFieldSubmitted,
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: FlutterFlowTheme.of(context).labelMedium.override(
               font: GoogleFonts.inter(),
               color: FlutterFlowTheme.of(context).secondaryText,
             ),
-        prefixIcon: leadingIcon != null 
-            ? Icon(leadingIcon, color: FlutterFlowTheme.of(context).primaryText) 
+        prefixIcon: leadingIcon != null
+            ? Icon(leadingIcon, color: FlutterFlowTheme.of(context).primaryText)
             : null,
         enabledBorder: OutlineInputBorder(
           borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
@@ -280,7 +289,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                                       _selectedArea = val;
                                       final newPecasForArea = (globalAreaDatabase[_selectedArea!]['pecas'] as List).cast<String>();
                                       _selectedPeca = newPecasForArea.isNotEmpty ? newPecasForArea.first : null;
-                                      _pecaController?.value = _selectedPeca; 
+                                      _pecaController?.value = _selectedPeca;
                                     });
                                   }
                                 },
@@ -334,7 +343,11 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                           updateCallback: () => safeSetState(() {}),
                           child: const FormLabelWidget(label: 'Título do Tópico'),
                         ),
-                        _buildTextInput(hint: 'Ex: Rescisão sem justa causa', controller: _titleController),
+                        _buildTextInput(
+                          hint: 'Ex: Rescisão sem justa causa',
+                          controller: _titleController,
+                          textInputAction: TextInputAction.next,
+                        ),
                       ],
                     ),
                     Column(
@@ -367,7 +380,11 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _buildTextInput(hint: 'Digite o texto jurídico aqui...', controller: _contentController, maxLines: 8),
+                                _buildTextInput(
+                                  hint: 'Digite o texto jurídico aqui...',
+                                  controller: _contentController,
+                                  maxLines: 8,
+                                ),
                                 Padding(
                                   padding: const EdgeInsetsDirectional.fromSTEB(0.0, 16.0, 0.0, 16.0),
                                   child: Divider(height: 16.0, thickness: 1.0, color: FlutterFlowTheme.of(context).alternate),
@@ -411,7 +428,13 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                           model: _model.formLabelModel4, updateCallback: () => safeSetState(() {}),
                           child: const FormLabelWidget(label: 'Tags de Organização'),
                         ),
-                        _buildTextInput(hint: 'Adicione tags separadas por vírgula', controller: _tagsController, leadingIcon: Icons.label_rounded),
+                        _buildTextInput(
+                          hint: 'Adicione tags separadas por vírgula',
+                          controller: _tagsController,
+                          leadingIcon: Icons.label_rounded,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _saveTopicToSupabase(),
+                        ),
                       ],
                     ),
                   ].divide(const SizedBox(height: 32.0)),
@@ -435,7 +458,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                               onTap: () => _closeModal(),
                               child: wrapWithModel(
                                 model: _model.buttonModel1, updateCallback: () => safeSetState(() {}),
-                                child: ButtonWidget(
+                                child: const ButtonWidget(
                                   iconPresent: false, iconEndPresent: false, content: 'Cancelar',
                                   variant: 'outline', size: 'small', fullWidth: false, loading: false, disabled: false,
                                 ),
@@ -452,7 +475,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                                 child: ButtonWidget(
                                   icon: Icon(Icons.save_rounded, color: FlutterFlowTheme.of(context).primaryText, size: 24.0),
                                   iconPresent: true, iconEndPresent: false, content: _isSaving ? 'Salvando...' : 'Salvar Tópico',
-                                  variant: 'primary', size: 'small', fullWidth: false, loading: false, disabled: _isSaving,
+                                  variant: 'primary', size: 'small', fullWidth: false, loading: _isSaving, disabled: _isSaving,
                                 ),
                               ),
                             ),

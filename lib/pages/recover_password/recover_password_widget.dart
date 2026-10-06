@@ -7,6 +7,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'recover_password_model.dart';
 export 'recover_password_model.dart';
 
@@ -23,8 +24,8 @@ class RecoverPasswordWidget extends StatefulWidget {
 class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
   late RecoverPasswordModel _model;
   final scaffoldKey = GlobalKey<ScaffoldState>();
-  
   late TextEditingController _emailController;
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -40,11 +41,52 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
     super.dispose();
   }
 
+  Future<void> _enviarLinkRecuperacao() async {
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Por favor, informe um e-mail válido.')),
+      );
+      return;
+    }
+
+    safeSetState(() => _isLoading = true);
+
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(
+        email,
+        redirectTo: 'https://legal-tech-gd.netlify.app/login',
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Instruções de redefinição enviadas para $email'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      context.safePop();
+    } on AuthException catch (error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao solicitar: ${error.message}'), backgroundColor: Colors.red),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      safeSetState(() => _isLoading = false);
+    }
+  }
+
   Widget _buildCustomInput({
     required String label,
     required String hint,
     required IconData icon,
     required TextEditingController controller,
+    TextInputAction? textInputAction,
+    Function(String)? onFieldSubmitted,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -60,9 +102,11 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                 letterSpacing: 0.5,
               ),
         ),
-        SizedBox(height: 6.0),
+        const SizedBox(height: 6.0),
         TextFormField(
           controller: controller,
+          textInputAction: textInputAction,
+          onFieldSubmitted: onFieldSubmitted,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: FlutterFlowTheme.of(context).labelMedium.override(
@@ -90,7 +134,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
             ),
             filled: true,
             fillColor: FlutterFlowTheme.of(context).primaryBackground,
-            contentPadding: EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 16.0),
+            contentPadding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 16.0),
           ),
           style: FlutterFlowTheme.of(context).bodyMedium.override(
                 font: GoogleFonts.inter(),
@@ -114,19 +158,17 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
         body: SafeArea(
           child: SingleChildScrollView(
             child: Padding(
-              padding: EdgeInsets.all(32.0),
+              padding: const EdgeInsets.all(32.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.start,
-                crossAxisAlignment: CrossAxisAlignment.stretch, 
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  
-                  
-                  Container(
-                    width: double.infinity, 
+                  SizedBox(
+                    width: double.infinity,
                     child: Row(
                       mainAxisSize: MainAxisSize.max,
-                      mainAxisAlignment: MainAxisAlignment.start, 
+                      mainAxisAlignment: MainAxisAlignment.start,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         InkWell(
@@ -140,22 +182,19 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                           child: wrapWithModel(
                             model: _model.backButtonModel,
                             updateCallback: () => safeSetState(() {}),
-                            child: BackButtonWidget(),
+                            child: const BackButtonWidget(),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  
                   Container(height: 32.0),
-                  
                   Center(
                     child: Container(
-                      constraints: BoxConstraints(maxWidth: 450.0),
+                      constraints: const BoxConstraints(maxWidth: 450.0),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          
                           Column(
                             mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.start,
@@ -173,7 +212,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                     width: 1.0,
                                   ),
                                 ),
-                                alignment: AlignmentDirectional(0.0, 0.0),
+                                alignment: const AlignmentDirectional(0.0, 0.0),
                                 child: Icon(
                                   Icons.lock_reset_rounded,
                                   color: FlutterFlowTheme.of(context).primary,
@@ -204,12 +243,11 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                           lineHeight: 1.5,
                                         ),
                                   ),
-                                ].divide(SizedBox(height: 4.0)),
+                                ].divide(const SizedBox(height: 4.0)),
                               ),
-                            ].divide(SizedBox(height: 16.0)),
+                            ].divide(const SizedBox(height: 16.0)),
                           ),
                           Container(height: 32.0),
-                          
                           Container(
                             decoration: BoxDecoration(
                               color: FlutterFlowTheme.of(context).secondaryBackground,
@@ -221,7 +259,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                               ),
                             ),
                             child: Padding(
-                              padding: EdgeInsets.all(24.0),
+                              padding: const EdgeInsets.all(24.0),
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 mainAxisAlignment: MainAxisAlignment.start,
@@ -232,20 +270,11 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                     hint: 'seu@email.com',
                                     icon: Icons.mail_outline_rounded,
                                     controller: _emailController,
+                                    textInputAction: TextInputAction.done,
+                                    onFieldSubmitted: (_) => _enviarLinkRecuperacao(),
                                   ),
                                   InkWell(
-                                    onTap: () {
-                                      if (_emailController.text.isNotEmpty) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Instruções enviadas para ${_emailController.text}')),
-                                        );
-                                        context.safePop();
-                                      } else {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Por favor, informe um e-mail válido.')),
-                                        );
-                                      }
-                                    },
+                                    onTap: _isLoading ? null : _enviarLinkRecuperacao,
                                     child: wrapWithModel(
                                       model: _model.buttonModel1,
                                       updateCallback: () => safeSetState(() {}),
@@ -257,21 +286,20 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                         ),
                                         iconPresent: true,
                                         iconEndPresent: false,
-                                        content: 'Enviar Link',
+                                        content: _isLoading ? 'Enviando...' : 'Enviar Link',
                                         variant: 'primary',
                                         size: 'medium',
                                         fullWidth: true,
-                                        loading: false,
-                                        disabled: false,
+                                        loading: _isLoading,
+                                        disabled: _isLoading,
                                       ),
                                     ),
                                   ),
-                                ].divide(SizedBox(height: 24.0)),
+                                ].divide(const SizedBox(height: 24.0)),
                               ),
                             ),
                           ),
                           Container(height: 16.0),
-                          
                           Container(
                             decoration: BoxDecoration(
                               color: FlutterFlowTheme.of(context).secondaryBackground,
@@ -283,7 +311,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                               ),
                             ),
                             child: Padding(
-                              padding: EdgeInsets.all(16.0),
+                              padding: const EdgeInsets.all(16.0),
                               child: Row(
                                 mainAxisSize: MainAxisSize.max,
                                 mainAxisAlignment: MainAxisAlignment.start,
@@ -304,12 +332,11 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                           ),
                                     ),
                                   ),
-                                ].divide(SizedBox(width: 16.0)),
+                                ].divide(const SizedBox(width: 16.0)),
                               ),
                             ),
                           ),
                           Container(height: 32.0),
-                          
                           Column(
                             mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.start,
@@ -333,12 +360,12 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                     hoverColor: Colors.transparent,
                                     highlightColor: Colors.transparent,
                                     onTap: () async {
-                                      context.safePop(); // Volta para o login
+                                      context.safePop();
                                     },
                                     child: wrapWithModel(
                                       model: _model.buttonModel2,
                                       updateCallback: () => safeSetState(() {}),
-                                      child: ButtonWidget(
+                                      child: const ButtonWidget(
                                         iconPresent: false,
                                         iconEndPresent: false,
                                         content: 'Fazer Login',
@@ -350,7 +377,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                       ),
                                     ),
                                   ),
-                                ].divide(SizedBox(width: 4.0)),
+                                ].divide(const SizedBox(width: 4.0)),
                               ),
                               Divider(
                                 height: 16.0,
@@ -403,11 +430,10 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                           color: FlutterFlowTheme.of(context).secondaryText,
                                         ),
                                   ),
-                                ].divide(SizedBox(width: 24.0)),
+                                ].divide(const SizedBox(width: 24.0)),
                               ),
-                            ].divide(SizedBox(height: 16.0)),
+                            ].divide(const SizedBox(height: 16.0)),
                           ),
-                          
                         ],
                       ),
                     ),

@@ -24,7 +24,6 @@ class LoginWidget extends StatefulWidget {
 class _LoginWidgetState extends State<LoginWidget> {
   late LoginModel _model;
   final scaffoldKey = GlobalKey<ScaffoldState>();
-  
   bool _rememberMe = false;
   bool _passwordVisibility = false;
   bool _isLoading = false;
@@ -54,6 +53,8 @@ class _LoginWidgetState extends State<LoginWidget> {
     required IconData icon,
     required TextEditingController controller,
     bool isPassword = false,
+    TextInputAction? textInputAction,
+    Function(String)? onFieldSubmitted,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -71,6 +72,8 @@ class _LoginWidgetState extends State<LoginWidget> {
         TextFormField(
           controller: controller,
           obscureText: isPassword && !_passwordVisibility,
+          textInputAction: textInputAction,
+          onFieldSubmitted: onFieldSubmitted,
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: FlutterFlowTheme.of(context).labelMedium.override(
@@ -243,6 +246,7 @@ class _LoginWidgetState extends State<LoginWidget> {
                                           hint: 'seu@email.com',
                                           icon: Icons.mail_outline_rounded,
                                           controller: _emailController,
+                                          textInputAction: TextInputAction.next,
                                         ),
                                         _buildCustomInput(
                                           label: 'Senha',
@@ -250,6 +254,8 @@ class _LoginWidgetState extends State<LoginWidget> {
                                           icon: Icons.lock_outline_rounded,
                                           controller: _passwordController,
                                           isPassword: true,
+                                          textInputAction: TextInputAction.done,
+                                          onFieldSubmitted: (_) => _fazerLogin(),
                                         ),
                                         Row(
                                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
