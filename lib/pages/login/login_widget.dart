@@ -1,12 +1,9 @@
-import '/components/social_button/social_button_widget.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
-import 'dart:ui';
 import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'login_model.dart';
 export 'login_model.dart';
@@ -24,7 +21,6 @@ class LoginWidget extends StatefulWidget {
 class _LoginWidgetState extends State<LoginWidget> {
   late LoginModel _model;
   final scaffoldKey = GlobalKey<ScaffoldState>();
-  bool _rememberMe = false;
   bool _passwordVisibility = false;
   bool _isLoading = false;
 
@@ -133,7 +129,7 @@ class _LoginWidgetState extends State<LoginWidget> {
       );
 
       if (response.user != null) {
-        context.pushNamed(MainMenuWidget.routeName);
+        context.goNamed(MainMenuWidget.routeName);
       }
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -258,30 +254,8 @@ class _LoginWidgetState extends State<LoginWidget> {
                                           onFieldSubmitted: (_) => _fazerLogin(),
                                         ),
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment: MainAxisAlignment.end,
                                           children: [
-                                            InkWell(
-                                              onTap: () => safeSetState(() => _rememberMe = !_rememberMe),
-                                              child: Row(
-                                                children: [
-                                                  Container(
-                                                    width: 18.0, height: 18.0,
-                                                    decoration: BoxDecoration(
-                                                      color: _rememberMe ? FlutterFlowTheme.of(context).primary : Colors.transparent,
-                                                      borderRadius: BorderRadius.circular(4.0),
-                                                      border: Border.all(
-                                                        color: _rememberMe ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-                                                        width: 1.5,
-                                                      ),
-                                                    ),
-                                                    alignment: Alignment.center,
-                                                    child: _rememberMe ? const Icon(Icons.check_rounded, color: Colors.white, size: 12.0) : null,
-                                                  ),
-                                                  const SizedBox(width: 8.0),
-                                                  Text('Lembrar de mim', style: FlutterFlowTheme.of(context).bodySmall.override(font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText)),
-                                                ],
-                                              ),
-                                            ),
                                             FFButtonWidget(
                                               onPressed: () async => context.pushNamed(RecoverPasswordWidget.routeName),
                                               text: 'Esqueceu a senha?',
@@ -312,21 +286,6 @@ class _LoginWidgetState extends State<LoginWidget> {
                                         elevation: 0.0,
                                         borderRadius: BorderRadius.circular(8.0),
                                       ),
-                                    ),
-                                    Row(
-                                      children: [
-                                        Expanded(child: Divider(color: FlutterFlowTheme.of(context).alternate)),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                          child: Text('OU', style: FlutterFlowTheme.of(context).labelSmall),
-                                        ),
-                                        Expanded(child: Divider(color: FlutterFlowTheme.of(context).alternate)),
-                                      ],
-                                    ),
-                                    wrapWithModel(
-                                      model: _model.socialButtonModel,
-                                      updateCallback: () => safeSetState(() {}),
-                                      child: const SocialButtonWidget(icon: 'https://cdn.simpleicons.org/google/111827.svg', label: 'Entrar com Google'),
                                     ),
                                     Padding(
                                       padding: const EdgeInsets.only(top: 16.0),

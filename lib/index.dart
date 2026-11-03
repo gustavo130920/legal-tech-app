@@ -2,6 +2,8 @@ export '/pages/login/login_widget.dart' show LoginWidget;
 export '/pages/register/register_widget.dart' show RegisterWidget;
 export '/pages/recover_password/recover_password_widget.dart'
     show RecoverPasswordWidget;
+export '/pages/update_password/update_password_widget.dart'
+    show UpdatePasswordWidget;
 export '/pages/main_menu/main_menu_widget.dart' show MainMenuWidget;
 export '/pages/add_topic_modal/add_topic_modal_widget.dart'
     show AddTopicModalWidget;

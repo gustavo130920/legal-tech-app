@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,8 +7,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import 'flutter_flow/flutter_flow_util.dart';
-import 'flutter_flow/nav/nav.dart';
-import 'index.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,6 +46,7 @@ class _MyAppState extends State<MyApp> {
 
   late AppStateNotifier _appStateNotifier;
   late GoRouter _router;
+  late StreamSubscription<AuthState> _authSubscription;
   String getRoute([RouteMatch? routeMatch]) {
     final RouteMatch lastMatch =
         routeMatch ?? _router.routerDelegate.currentConfiguration.last;
@@ -65,6 +66,16 @@ class _MyAppState extends State<MyApp> {
 
     _appStateNotifier = AppStateNotifier.instance;
     _router = createRouter(_appStateNotifier);
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen(
+      (authState) => _appStateNotifier.handleAuthEvent(authState.event),
+      onError: (Object error) => debugPrint('Falha na sessão: $error'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _authSubscription.cancel();
+    super.dispose();
   }
 
   void setThemeMode(ThemeMode mode) => safeSetState(() {

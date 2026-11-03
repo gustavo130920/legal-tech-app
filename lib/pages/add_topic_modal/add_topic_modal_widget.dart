@@ -1,3 +1,4 @@
+import '/features/drafting/domain/document_composer.dart';
 import '/components/button/button_widget.dart';
 import '/components/form_label/form_label_widget.dart';
 import '/components/placeholder_chip/placeholder_chip_widget.dart';
@@ -5,18 +6,14 @@ import '/flutter_flow/flutter_flow_drop_down.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
 import '/flutter_flow/form_field_controller.dart';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'add_topic_modal_model.dart';
 export 'add_topic_modal_model.dart';
 
 import '../../app_state.dart';
-import '../area_workspace/area_workspace_widget.dart';
 
 class AddTopicModalWidget extends StatefulWidget {
   const AddTopicModalWidget({super.key});
@@ -61,8 +58,8 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
     final pecasForArea = (globalAreaDatabase[_selectedArea!]['pecas'] as List).cast<String>();
     
-    if (AreaWorkspaceWidget.currentSelectedPeca != null && pecasForArea.contains(AreaWorkspaceWidget.currentSelectedPeca)) {
-      _selectedPeca = AreaWorkspaceWidget.currentSelectedPeca;
+    if (globalSelectedPeca != null && pecasForArea.contains(globalSelectedPeca)) {
+      _selectedPeca = globalSelectedPeca;
     } else {
       _selectedPeca = pecasForArea.isNotEmpty ? pecasForArea.first : null;
     }
@@ -105,11 +102,8 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     safeSetState(() => _isSaving = true);
 
     try {
-      final regex = RegExp(r'\{\{(.*?)\}\}');
-      final matches = regex.allMatches(content);
-      final extractedVars = matches.map((m) => m.group(1)!.trim()).toSet().toList();
-
-      final previewText = content.length > 40 ? '${content.substring(0, 40)}...' : content;
+      final extractedVars = extractVariables(content);
+      final previewText = topicPreview(content);
 
       await Supabase.instance.client.from('topics').insert({
         'user_id': user.id,

@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 
 
 String globalCurrentArea = 'Trabalhista';
+String? globalSelectedPeca;
 Set<String> globalSavedAreas = {};
 
 final Map<String, dynamic> globalAreaDatabase = {
@@ -41,6 +42,17 @@ final Map<String, dynamic> globalAreaDatabase = {
     'topics': <Map<String, dynamic>>[]
   }
 };
+
+/// Apaga da memória os dados do usuário para evitar vazamento entre contas.
+void clearSessionMemory() {
+  globalCurrentArea = '';
+  globalSelectedPeca = null;
+  globalSavedAreas = {};
+  globalAreaDatabase.forEach((key, value) {
+    value['pecas'] = <String>[];
+    value['topics'] = <Map<String, dynamic>>[];
+  });
+}
 
 class CpfInputFormatter extends TextInputFormatter {
   @override

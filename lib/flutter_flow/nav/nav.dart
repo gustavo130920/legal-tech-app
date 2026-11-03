@@ -1,16 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:page_transition/page_transition.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '/main.dart';
-import '/flutter_flow/flutter_flow_theme.dart';
-import '/flutter_flow/lat_lng.dart';
-import '/flutter_flow/place.dart';
+import '/app_state.dart';
+import '/core/auth/auth_redirect.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import 'serialization_util.dart';
 
 import '/index.dart';
 
@@ -29,17 +26,42 @@ class AppStateNotifier extends ChangeNotifier {
 
   bool showSplashImage = true;
 
+  bool isPasswordRecovery = false;
+
   void stopShowingSplashImage() {
     showSplashImage = false;
+    notifyListeners();
+  }
+
+  /// Reage a toda mudança de sessão, inclusive saída em outra aba ou expiração.
+  void handleAuthEvent(AuthChangeEvent event) {
+    if (event == AuthChangeEvent.tokenRefreshed) return;
+
+    if (event == AuthChangeEvent.signedOut) {
+      clearSessionMemory();
+      isPasswordRecovery = false;
+    } else if (event == AuthChangeEvent.passwordRecovery) {
+      isPasswordRecovery = true;
+    }
+    notifyListeners();
+  }
+
+  void finishPasswordRecovery() {
+    isPasswordRecovery = false;
     notifyListeners();
   }
 }
 
 GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
       initialLocation: '/',
-      debugLogDiagnostics: true,
+      debugLogDiagnostics: kDebugMode,
       refreshListenable: appStateNotifier,
       navigatorKey: appNavigatorKey,
+      redirect: (context, state) => resolveAuthRedirect(
+        path: state.uri.path,
+        isLoggedIn: Supabase.instance.client.auth.currentSession != null,
+        isPasswordRecovery: appStateNotifier.isPasswordRecovery,
+      ),
       errorBuilder: (context, state) => LoginWidget(),
       routes: [
         FFRoute(
@@ -61,6 +83,11 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
           name: RecoverPasswordWidget.routeName,
           path: RecoverPasswordWidget.routePath,
           builder: (context, params) => RecoverPasswordWidget(),
+        ),
+        FFRoute(
+          name: UpdatePasswordWidget.routeName,
+          path: UpdatePasswordWidget.routePath,
+          builder: (context, params) => UpdatePasswordWidget(),
         ),
         FFRoute(
           name: MainMenuWidget.routeName,

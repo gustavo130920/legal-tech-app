@@ -2,17 +2,10 @@ import '/components/button/button_widget.dart';
 import '/components/form_label/form_label_widget.dart';
 import '/components/placeholder_chip/placeholder_chip_widget.dart';
 import '/components/text_field/text_field_widget.dart';
-import '/flutter_flow/flutter_flow_drop_down.dart';
-import '/flutter_flow/flutter_flow_icon_button.dart';
-import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
 import '/flutter_flow/form_field_controller.dart';
-import 'dart:ui';
 import 'add_topic_modal_widget.dart' show AddTopicModalWidget;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 
 class AddTopicModalModel extends FlutterFlowModel<AddTopicModalWidget> {
   

@@ -2,16 +2,13 @@ import '/components/quick_action_card_widget.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; 
-import 'dart:convert';
-import 'dart:html' as html;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '/features/drafting/domain/document_composer.dart';
+import '/platform/document_actions.dart';
 import 'area_workspace_model.dart';
 import '../add_topic_modal/add_topic_modal_widget.dart';
 import '../main_menu/main_menu_widget.dart';
@@ -24,8 +21,6 @@ class AreaWorkspaceWidget extends StatefulWidget {
 
   static String routeName = 'AreaWorkspace';
   static String routePath = '/areaWorkspace';
-  
-  static String? currentSelectedPeca;
 
   @override
   State<AreaWorkspaceWidget> createState() => _AreaWorkspaceWidgetState();
@@ -45,14 +40,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
   Set<int> get selectedTopics => _selectedTopics ??= {};
 
   Map<String, TextEditingController> _dynamicControllers = {};
-  
-  final List<String> defaultVars = [
-    'NOME_CLIENTE', 'nome_cliente', 
-    'CPF', 'cpf', 
-    'REU', 'reu_destinatario', 
-    'PROCESSO', 'numero_processo', 
-    'ENDEREÇAMENTO', 'endereçamento'
-  ];
+  final Map<String, String> _pecaHeaders = {};
 
   String? _selectedPeca;
   bool _isLoadingData = false;
@@ -100,7 +88,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     try {
       final pecasResponse = await Supabase.instance.client
           .from('pecas')
-          .select('peca_name')
+          .select('peca_name, header_template')
           .eq('user_id', user.id)
           .eq('area_name', globalCurrentArea)
           .order('id', ascending: true);
@@ -108,6 +96,12 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       final List<String> loadedPecas = (pecasResponse as List)
           .map((item) => item['peca_name'].toString())
           .toList();
+
+      _pecaHeaders
+        ..clear()
+        ..addEntries((pecasResponse as List)
+            .where((item) => item['header_template'] != null)
+            .map((item) => MapEntry(item['peca_name'].toString(), item['header_template'].toString())));
 
       final currentAreaMap = globalAreaDatabase[globalCurrentArea];
       if (currentAreaMap != null) {
@@ -146,7 +140,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         _selectedPeca = null;
       }
       
-      AreaWorkspaceWidget.currentSelectedPeca = _selectedPeca;
+      globalSelectedPeca = _selectedPeca;
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro ao sincronizar nuvem: $e'), backgroundColor: Colors.red),
@@ -161,10 +155,11 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     if (_selectedPeca == newPeca) return;
     safeSetState(() {
       _selectedPeca = newPeca;
-      AreaWorkspaceWidget.currentSelectedPeca = newPeca;
+      globalSelectedPeca = newPeca;
       selectedTopics.clear();
       _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
       _dynamicControllers.clear();
+      _updateDynamicFields();
     });
   }
 
@@ -251,6 +246,9 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
 
   void _showEditPecaDialog(String oldName) {
     final TextEditingController pecaController = TextEditingController(text: oldName);
+    final TextEditingController headerController = TextEditingController(
+      text: _pecaHeaders[oldName] ?? defaultHeaderForArea(globalCurrentArea),
+    );
     showDialog(
       context: context,
       builder: (context) {
@@ -263,27 +261,65 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                   color: FlutterFlowTheme.of(context).primaryText,
                 ),
           ),
-          content: TextField(
-            controller: pecaController,
-            autofocus: true,
-            onSubmitted: (_) => _submitEditPeca(oldName, pecaController.text),
-            decoration: InputDecoration(
-              hintText: 'Novo nome da peça',
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                borderRadius: BorderRadius.circular(8.0),
+          content: SizedBox(
+            width: 560.0,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: pecaController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: 'Nome da peça',
+                      labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      filled: true,
+                      fillColor: FlutterFlowTheme.of(context).primaryBackground,
+                    ),
+                    style: FlutterFlowTheme.of(context).bodyMedium.override(
+                          font: GoogleFonts.inter(),
+                          color: FlutterFlowTheme.of(context).primaryText,
+                        ),
+                  ),
+                  const SizedBox(height: 16.0),
+                  TextField(
+                    controller: headerController,
+                    minLines: 6,
+                    maxLines: 12,
+                    decoration: InputDecoration(
+                      labelText: 'Cabeçalho da peça',
+                      alignLabelWithHint: true,
+                      helperText: 'Separe os parágrafos com uma linha em branco. Use variáveis como {{ENDEREÇAMENTO}}, {{PROCESSO}}, {{NOME_CLIENTE}}, {{REU}} e {{CPF}}.',
+                      helperMaxLines: 3,
+                      labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
+                      helperStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      filled: true,
+                      fillColor: FlutterFlowTheme.of(context).primaryBackground,
+                    ),
+                    style: FlutterFlowTheme.of(context).bodyMedium.override(
+                          font: GoogleFonts.inter(),
+                          color: FlutterFlowTheme.of(context).primaryText,
+                        ),
+                  ),
+                ],
               ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              filled: true,
-              fillColor: FlutterFlowTheme.of(context).primaryBackground,
             ),
-            style: FlutterFlowTheme.of(context).bodyMedium.override(
-                  font: GoogleFonts.inter(),
-                  color: FlutterFlowTheme.of(context).primaryText,
-                ),
           ),
           actions: [
             TextButton(
@@ -291,7 +327,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
               child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
             ),
             ElevatedButton(
-              onPressed: () => _submitEditPeca(oldName, pecaController.text),
+              onPressed: () => _submitEditPeca(oldName, pecaController.text, headerController.text),
               style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
               child: const Text('Salvar', style: TextStyle(color: Colors.white)),
             ),
@@ -301,9 +337,13 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     );
   }
 
-  Future<void> _submitEditPeca(String oldName, String newNameRaw) async {
+  Future<void> _submitEditPeca(String oldName, String newNameRaw, String headerRaw) async {
     final newName = newNameRaw.trim().toUpperCase();
-    if (newName.isEmpty || newName == oldName) {
+    final headerText = headerRaw.trim();
+    // Guardar o texto padrão faria a peça não receber correções futuras dele.
+    final newHeader = headerText.isEmpty || headerText == defaultHeaderForArea(globalCurrentArea) ? null : headerText;
+
+    if (newName.isEmpty || (newName == oldName && newHeader == _pecaHeaders[oldName])) {
       Navigator.pop(context);
       return;
     }
@@ -312,10 +352,15 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     if (user == null) return;
 
     try {
-      await Supabase.instance.client.from('pecas').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
-      await Supabase.instance.client.from('topics').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
+      await Supabase.instance.client.from('pecas').update({'peca_name': newName, 'header_template': newHeader}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
+      if (newName != oldName) {
+        await Supabase.instance.client.from('topics').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
+      }
 
       safeSetState(() {
+        _pecaHeaders.remove(oldName);
+        if (newHeader != null) _pecaHeaders[newName] = newHeader;
+
         final pecasList = (globalAreaDatabase[globalCurrentArea]['pecas'] as List);
         final idx = pecasList.indexOf(oldName);
         if (idx != -1) pecasList[idx] = newName;
@@ -327,14 +372,15 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
 
         if (_selectedPeca == oldName) {
           _selectedPeca = newName;
-          AreaWorkspaceWidget.currentSelectedPeca = newName;
+          globalSelectedPeca = newName;
         }
+        _updateDynamicFields();
       });
 
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça renomeada com sucesso!'), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça atualizada com sucesso!'), backgroundColor: Colors.green));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao renomear peça: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar peça: $e'), backgroundColor: Colors.red));
     }
   }
 
@@ -366,6 +412,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       await Supabase.instance.client.from('pecas').delete().eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', pecaName);
 
       safeSetState(() {
+        _pecaHeaders.remove(pecaName);
         (globalAreaDatabase[globalCurrentArea]['pecas'] as List).remove(pecaName);
         final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
         topicsList.removeWhere((t) => t['peca'] == pecaName);
@@ -373,7 +420,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         final remainingPecas = (globalAreaDatabase[globalCurrentArea]['pecas'] as List).cast<String>();
         if (_selectedPeca == pecaName) {
           _selectedPeca = remainingPecas.isNotEmpty ? remainingPecas.first : null;
-          AreaWorkspaceWidget.currentSelectedPeca = _selectedPeca;
+          globalSelectedPeca = _selectedPeca;
           selectedTopics.clear();
           _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
           _dynamicControllers.clear();
@@ -455,10 +502,8 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     if (title.isEmpty || content.isEmpty) return;
 
     try {
-      final regex = RegExp(r'\{\{(.*?)\}\}');
-      final matches = regex.allMatches(content);
-      final extractedVars = matches.map((m) => m.group(1)!.trim()).toSet().toList();
-      final previewText = content.length > 40 ? '${content.substring(0, 40)}...' : content;
+      final extractedVars = extractVariables(content);
+      final previewText = topicPreview(content);
 
       await Supabase.instance.client.from('topics').update({
         'title': title,
@@ -527,7 +572,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
     final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
 
-    Set<String> neededVars = {};
+    Set<String> neededVars = extractVariables(_currentHeaderTemplate).toSet();
 
     for (var topicId in selectedTopics) {
       final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
@@ -536,7 +581,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       }
     }
 
-    neededVars.removeWhere((v) => defaultVars.contains(v));
+    neededVars.removeWhere(standardVariableNames.contains);
 
     for (var v in neededVars) {
       if (!_dynamicControllers.containsKey(v)) {
@@ -565,106 +610,36 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     });
   }
 
-  String _applyVariables(String content, String cliente, String reu, String processo, String enderecamento) {
-    String parsed = content;
-    parsed = parsed.replaceAll('{{NOME_CLIENTE}}', cliente);
-    parsed = parsed.replaceAll('{{nome_cliente}}', cliente);
-    parsed = parsed.replaceAll('{{REU}}', reu);
-    parsed = parsed.replaceAll('{{reu_destinatario}}', reu);
-    parsed = parsed.replaceAll('{{PROCESSO}}', processo);
-    parsed = parsed.replaceAll('{{numero_processo}}', processo);
-    parsed = parsed.replaceAll('{{ENDEREÇAMENTO}}', enderecamento);
-    parsed = parsed.replaceAll('{{endereçamento}}', enderecamento);
-    parsed = parsed.replaceAll('{{CPF}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
-    parsed = parsed.replaceAll('{{cpf}}', _cpfController.text.isNotEmpty ? _cpfController.text : '[CPF]');
-
-    _dynamicControllers.forEach((key, controller) {
-      parsed = parsed.replaceAll('{{$key}}', controller.text.isNotEmpty ? controller.text : '{{$key}}');
-    });
-    return parsed;
+  String get _currentHeaderTemplate {
+    final saved = _pecaHeaders[_selectedPeca];
+    return saved != null && saved.trim().isNotEmpty
+        ? saved
+        : defaultHeaderForArea(globalCurrentArea);
   }
 
-  String _generateDocumentPreview() {
-    String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
-    String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
-    String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
-    String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
-
-    String documentHeader = '''EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.
-
-Processo nº.   $processo
-
-$reu, por seus advogados e procuradores infra-assinados, nos autos da ação trabalhista em epígrafe, movida por $cliente, inconformada com a r. decisão proferida por este douto Juízo, vem, respeitosamente, à presença de Vossa Excelência, com fulcro no artigo 895, inciso I da Consolidação das Leis do Trabalho, interpor.''';
-
-    if (selectedTopics.isEmpty) {
-      return '$documentHeader\n\n\n';
-    }
-
-    String fullDocument = documentHeader + '\n\n';
-
+  DocumentInput _buildDocumentInput() {
     final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
     final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
     final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
-    
+
+    final topics = <DocumentTopic>[];
     for (var topicId in selectedTopics) {
       final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
       if (topic.isNotEmpty && topic['content'] != null) {
-        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
-        String topicTitle = topic['title'].toString().toUpperCase();
-        fullDocument += '\n$topicTitle\n\n$parsedContent\n';
+        topics.add(DocumentTopic(title: topic['title'].toString(), content: topic['content']));
       }
     }
 
-    return fullDocument.trim();
-  }
-
-  // Gera HTML estritamente limpo com parágrafos formais (<p style="...">) para evitar desconfigurações
-  String _generateHtmlContent() {
-    String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
-    String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
-    String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
-    String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
-
-    const pStyle = "font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; margin: 0 0 12pt 0; line-height: 1.15;";
-    const boldStyle = "font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; margin: 12pt 0 6pt 0; line-height: 1.15; font-weight: bold;";
-
-    String htmlContent = '''
-      <div style="font-family: 'Calibri', sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;">
-        <p style="$pStyle">EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.</p>
-        <p style="$pStyle">Processo nº. &nbsp; $processo</p>
-        <p style="$pStyle">$reu, por seus advogados e procuradores infra-assinados, nos autos da ação trabalhista em epígrafe, movida por $cliente, inconformada com a r. decisão proferida por este douto Juízo, vem, respeitosamente, à presença de Vossa Excelência, com fulcro no artigo 895, inciso I da Consolidação das Leis do Trabalho, interpor.</p>
-    ''';
-
-    if (selectedTopics.isEmpty) {
-      htmlContent += '</div>';
-      return htmlContent;
-    }
-
-    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
-    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
-    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
-    
-    for (var topicId in selectedTopics) {
-      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
-      if (topic.isNotEmpty && topic['content'] != null) {
-        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
-        String topicTitle = topic['title'].toString().toUpperCase();
-        
-        List<String> paragraphs = parsedContent.split('\n');
-        String formattedParagraphs = paragraphs
-            .where((p) => p.trim().isNotEmpty)
-            .map((p) => '<p style="$pStyle">${p.trim()}</p>')
-            .join('');
-
-        htmlContent += '''
-          <p style="$boldStyle"><b>$topicTitle</b></p>
-          $formattedParagraphs
-        ''';
-      }
-    }
-
-    htmlContent += '</div>';
-    return htmlContent;
+    return DocumentInput(
+      headerTemplate: _currentHeaderTemplate,
+      topics: topics,
+      enderecamento: _enderecamentoController.text,
+      nomeCliente: _nomeController.text,
+      cpf: _cpfController.text,
+      reu: _reuController.text,
+      processo: _processoController.text,
+      customVariables: _dynamicControllers.map((key, controller) => MapEntry(key, controller.text)),
+    );
   }
 
   void _copyToClipboardAsHtml() {
@@ -673,33 +648,10 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
       return;
     }
 
-    final htmlContent = _generateHtmlContent();
-    final plainText = _generateDocumentPreview();
+    final input = _buildDocumentInput();
+    final plainText = composePlainText(input);
 
-    final textArea = html.TextAreaElement()
-      ..value = plainText
-      ..style.position = 'fixed'
-      ..style.left = '-9999px'
-      ..style.top = '0';
-      
-    html.document.body?.append(textArea);
-    textArea.focus();
-    textArea.select();
-
-    void onCopy(html.Event e) {
-      final clipboardEvent = e as html.ClipboardEvent;
-      clipboardEvent.clipboardData?.setData('text/html', htmlContent);
-      clipboardEvent.clipboardData?.setData('text/plain', plainText);
-      e.preventDefault(); 
-    }
-
-    html.document.addEventListener('copy', onCopy);
-    bool result = html.document.execCommand('copy');
-    
-    html.document.removeEventListener('copy', onCopy);
-    textArea.remove();
-
-    if (result) {
+    if (copyRichTextToClipboard(html: composeHtml(input), plainText: plainText)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Documento copiado com formatação perfeita! Cole no Word ou Docs.')),
       );
@@ -712,11 +664,6 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
   }
 
   Widget _buildRichDocumentPreview() {
-    String enderecamento = _enderecamentoController.text.isNotEmpty ? _enderecamentoController.text : '[ENDEREÇAMENTO]';
-    String processo = _processoController.text.isNotEmpty ? _processoController.text : '[NÚMERO DO PROCESSO]';
-    String reu = _reuController.text.isNotEmpty ? _reuController.text : '[RÉU / DESTINATÁRIO]';
-    String cliente = _nomeController.text.isNotEmpty ? _nomeController.text : '[NOME DO CLIENTE]';
-
     final baseStyle = FlutterFlowTheme.of(context).bodySmall.override(
       font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText, lineHeight: 1.5,
     );
@@ -724,32 +671,13 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
       font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText, lineHeight: 1.5,
     );
 
-    List<TextSpan> spans = [
-      TextSpan(text: 'EXCELENTÍSSIMO(A) SENHOR(A) DOUTOR(A) JUIZ(A) DE DIREITO $enderecamento.\n\n', style: baseStyle),
-      TextSpan(text: 'Processo nº.   $processo\n\n', style: baseStyle),
-      TextSpan(text: '$reu, por seus advogados e procuradores infra-assinados, nos autos da ação trabalhista em epígrafe, movida por $cliente, inconformada com a r. decisão proferida por este douto Juízo, vem, respeitosamente, à presença de Vossa Excelência, com fulcro no artigo 895, inciso I da Consolidação das Leis do Trabalho, interpor.\n', style: baseStyle),
-    ];
-
-    if (selectedTopics.isEmpty) {
-      return RichText(text: TextSpan(children: spans));
-    }
-
-    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
-    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
-    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
-    
-    for (var topicId in selectedTopics) {
-      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
-      if (topic.isNotEmpty && topic['content'] != null) {
-        String parsedContent = _applyVariables(topic['content'], cliente, reu, processo, enderecamento);
-        String topicTitle = topic['title'].toString().toUpperCase();
-        
-        spans.add(TextSpan(text: '\n$topicTitle\n', style: boldStyle));
-        spans.add(TextSpan(text: '$parsedContent\n', style: baseStyle));
-      }
-    }
-
-    return RichText(text: TextSpan(children: spans));
+    return RichText(
+      text: TextSpan(
+        children: composeSpans(_buildDocumentInput())
+            .map((span) => TextSpan(text: span.text, style: span.isTitle ? boldStyle : baseStyle))
+            .toList(),
+      ),
+    );
   }
 
   void _downloadAsDoc() {
@@ -757,21 +685,15 @@ $reu, por seus advogados e procuradores infra-assinados, nos autos da ação tra
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de gerar o documento.')));
       return;
     }
-    final htmlContent = _generateHtmlContent();
-    final docHtml = '''
-      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head><meta charset='utf-8'></head>
-      <body>$htmlContent</body>
-      </html>
-    ''';
-    try {
-      final bytes = utf8.encode(docHtml);
-      final base64Str = base64Encode(bytes);
-      final url = 'data:application/msword;base64,$base64Str';
-      html.AnchorElement(href: url)
-        ..setAttribute('download', '${_selectedPeca?.replaceAll(' ', '_')}.doc')
-        ..click();
-    } catch (e) {}
+    final downloaded = downloadWordDocument(
+      fileName: '${_selectedPeca?.replaceAll(' ', '_')}.doc',
+      content: composeWordDocument(_buildDocumentInput()),
+    );
+    if (!downloaded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não foi possível gerar o arquivo. Tente copiar o documento.'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   Widget _buildPecaCard(String name) {

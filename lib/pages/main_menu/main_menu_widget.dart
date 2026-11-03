@@ -1,14 +1,10 @@
 import '/components/button/button_widget.dart';
 import '/components/quick_action/quick_action_widget.dart';
-import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
-import 'dart:ui';
 import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'main_menu_model.dart';
 export 'main_menu_model.dart';
@@ -115,15 +111,9 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
       await Supabase.instance.client.auth.signOut();
       
       // CORREÇÃO: Limpeza profunda de RAM ao fazer logout para evitar vazamento de dados entre contas
-      globalSavedAreas.clear();
+      clearSessionMemory();
       _savedAreas.clear();
       _selectedAreas.clear();
-      globalCurrentArea = '';
-      
-      globalAreaDatabase.forEach((key, value) {
-        value['pecas'] = <String>[];
-        value['topics'] = <Map<String, dynamic>>[];
-      });
 
       if (mounted) {
         context.goNamed(LoginWidget.routeName);
