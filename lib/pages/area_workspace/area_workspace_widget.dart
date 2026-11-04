@@ -817,13 +817,10 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
   // A ação roda dentro do clique, porque o navegador só libera a área de
   // transferência durante um gesto do usuário.
   void _runAfterReview(String proceedLabel, VoidCallback action) {
-    final pending = findPendingFields(_buildDocumentInput());
-    final processoStatus = checkCnjNumber(_processoController.text).status;
-    final issues = [
-      ...pending.map((field) => '$field: não preenchido'),
-      if (processoStatus == CnjStatus.incomplete) 'Número do processo: incompleto',
-      if (processoStatus == CnjStatus.invalid) 'Número do processo: dígito verificador não confere',
-    ];
+    // A conferência do número CNJ é só informativa: qualquer número pode ser usado.
+    final issues = findPendingFields(_buildDocumentInput())
+        .map((field) => '$field: não preenchido')
+        .toList();
 
     if (issues.isEmpty) {
       action();
@@ -932,7 +929,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     final (String message, Color color) = switch (check.status) {
       CnjStatus.empty => ('', Colors.transparent),
       CnjStatus.incomplete => ('Número incompleto', FlutterFlowTheme.of(context).secondaryText),
-      CnjStatus.invalid => ('Dígito verificador não confere. Revise o número.', FlutterFlowTheme.of(context).error),
+      CnjStatus.invalid => ('Fora do padrão CNJ. Confira se houve erro de digitação.', _pendingColor),
       CnjStatus.valid => (check.description ?? 'Número válido', FlutterFlowTheme.of(context).success),
     };
     if (message.isEmpty) return const SizedBox.shrink();
