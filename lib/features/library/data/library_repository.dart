@@ -28,6 +28,16 @@ abstract class LibraryRepository {
   });
 
   Future<void> deleteTopic(int id);
+
+  Future<TopicKit> createKit({
+    required String userId,
+    required String area,
+    required String pecaName,
+    required String name,
+    required List<int> topicIds,
+  });
+
+  Future<void> deleteKit(int id);
 }
 
 class SupabaseLibraryRepository implements LibraryRepository {
@@ -51,7 +61,15 @@ class SupabaseLibraryRepository implements LibraryRepository {
         .eq('area_name', area)
         .order('id', ascending: true);
 
+    final kits = await _client
+        .from('topic_kits')
+        .select('id, peca_name, name, topic_ids')
+        .eq('user_id', userId)
+        .eq('area_name', area)
+        .order('name', ascending: true);
+
     return AreaLibrary(
+      kits: (kits as List).map(_kitFromRow).toList(),
       pecas: (pecas as List)
           .map((row) => PecaItem(
                 name: row['peca_name'].toString(),
@@ -102,11 +120,23 @@ class SupabaseLibraryRepository implements LibraryRepository {
           .eq('user_id', userId)
           .eq('area_name', area)
           .eq('peca_name', oldName);
+      await _client
+          .from('topic_kits')
+          .update({'peca_name': newName})
+          .eq('user_id', userId)
+          .eq('area_name', area)
+          .eq('peca_name', oldName);
     }
   }
 
   @override
   Future<void> deletePeca({required String userId, required String area, required String name}) async {
+    await _client
+        .from('topic_kits')
+        .delete()
+        .eq('user_id', userId)
+        .eq('area_name', area)
+        .eq('peca_name', name);
     await _client
         .from('topics')
         .delete()
@@ -141,4 +171,38 @@ class SupabaseLibraryRepository implements LibraryRepository {
   Future<void> deleteTopic(int id) async {
     await _client.from('topics').delete().eq('id', id);
   }
+
+  @override
+  Future<TopicKit> createKit({
+    required String userId,
+    required String area,
+    required String pecaName,
+    required String name,
+    required List<int> topicIds,
+  }) async {
+    final row = await _client
+        .from('topic_kits')
+        .insert({
+          'user_id': userId,
+          'area_name': area,
+          'peca_name': pecaName,
+          'name': name,
+          'topic_ids': topicIds,
+        })
+        .select('id, peca_name, name, topic_ids')
+        .single();
+    return _kitFromRow(row);
+  }
+
+  @override
+  Future<void> deleteKit(int id) async {
+    await _client.from('topic_kits').delete().eq('id', id);
+  }
+
+  TopicKit _kitFromRow(dynamic row) => TopicKit(
+        id: row['id'] as int,
+        pecaName: row['peca_name'].toString(),
+        name: row['name'].toString(),
+        topicIds: (row['topic_ids'] as List).cast<int>(),
+      );
 }

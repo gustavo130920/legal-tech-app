@@ -51,6 +51,7 @@ class WorkspaceViewModel extends ChangeNotifier {
 
   List<PecaItem> _pecas = const [];
   List<TopicItem> _topics = const [];
+  List<TopicKit> _kits = const [];
   String? _selectedPeca;
   final List<int> _selectedTopicIds = [];
   final Map<ClientField, String> _fields = {};
@@ -71,6 +72,15 @@ class WorkspaceViewModel extends ChangeNotifier {
 
   List<TopicItem> get topicsOfSelectedPeca =>
       _topics.where((topic) => topic.pecaName == _selectedPeca).toList();
+
+  List<TopicKit> get kitsOfSelectedPeca =>
+      _kits.where((kit) => kit.pecaName == _selectedPeca).toList();
+
+  /// Tópicos do kit que ainda existem nesta peça.
+  int availableTopicsInKit(TopicKit kit) {
+    final idsOfPeca = topicsOfSelectedPeca.map((topic) => topic.id).toSet();
+    return kit.topicIds.where(idsOfPeca.contains).length;
+  }
 
   /// Tópicos da peça que combinam com a busca, por título ou conteúdo.
   List<TopicItem> get visibleTopics {
@@ -149,6 +159,7 @@ class WorkspaceViewModel extends ChangeNotifier {
 
       _pecas = library.pecas;
       _topics = library.topics;
+      _kits = library.kits;
 
       final names = _pecas.map((peca) => peca.name).toList();
       if (!names.contains(_selectedPeca)) {
@@ -249,6 +260,43 @@ class WorkspaceViewModel extends ChangeNotifier {
     _notify();
   }
 
+  /// Troca a seleção pelos tópicos do kit, na ordem salva. Retorna quantos
+  /// tópicos do kit não existem mais.
+  int applyKit(TopicKit kit) {
+    final idsOfPeca = topicsOfSelectedPeca.map((topic) => topic.id).toSet();
+    final available = kit.topicIds.where(idsOfPeca.contains).toList();
+    _selectedTopicIds
+      ..clear()
+      ..addAll(available);
+    _pruneCustomValues();
+    _saveDraft();
+    _notify();
+    return kit.topicIds.length - available.length;
+  }
+
+  Future<void> saveSelectionAsKit(String rawName) async {
+    final userId = _currentUserId();
+    final name = rawName.trim();
+    final peca = _selectedPeca;
+    if (userId == null || peca == null || name.isEmpty || _selectedTopicIds.isEmpty) return;
+
+    final kit = await _repository.createKit(
+      userId: userId,
+      area: area,
+      pecaName: peca,
+      name: name,
+      topicIds: List.of(_selectedTopicIds),
+    );
+    _kits = [..._kits, kit]..sort((a, b) => a.name.compareTo(b.name));
+    _notify();
+  }
+
+  Future<void> deleteKit(int id) async {
+    await _repository.deleteKit(id);
+    _kits = _kits.where((kit) => kit.id != id).toList();
+    _notify();
+  }
+
   void clearClientData() {
     _fields.clear();
     _customValues.clear();
@@ -314,6 +362,12 @@ class WorkspaceViewModel extends ChangeNotifier {
                 )
               : topic,
       ];
+      _kits = [
+        for (final kit in _kits)
+          kit.pecaName == oldName
+              ? TopicKit(id: kit.id, pecaName: newName, name: kit.name, topicIds: kit.topicIds)
+              : kit,
+      ];
       if (_selectedPeca == oldName) _selectedPeca = newName;
     }
     _pruneCustomValues();
@@ -329,6 +383,7 @@ class WorkspaceViewModel extends ChangeNotifier {
     await _repository.deletePeca(userId: userId, area: area, name: name);
     _pecas = _pecas.where((peca) => peca.name != name).toList();
     _topics = _topics.where((topic) => topic.pecaName != name).toList();
+    _kits = _kits.where((kit) => kit.pecaName != name).toList();
     if (_selectedPeca == name) {
       _selectedPeca = _pecas.isNotEmpty ? _pecas.first.name : null;
       _selectedTopicIds.clear();

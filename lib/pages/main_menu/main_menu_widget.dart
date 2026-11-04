@@ -34,6 +34,9 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
   String _userInitials = 'US';
   bool _isLoading = true;
   bool _isSavingConfig = false;
+  bool _areaSettingsOpen = false;
+
+  bool get _showAreaSettings => _areaSettingsOpen || _savedAreas.isEmpty;
 
   final Map<String, Map<String, dynamic>> _areaData = {
     'Trabalhista': {'icon': Icons.work_rounded},
@@ -163,6 +166,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
       safeSetState(() {
         _savedAreas = Set.from(_selectedAreas);
         globalSavedAreas = Set.from(_selectedAreas);
+        _areaSettingsOpen = false;
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -175,6 +179,57 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
     } finally {
       safeSetState(() => _isSavingConfig = false);
     }
+  }
+
+  Widget _buildGettingStarted() {
+    final theme = FlutterFlowTheme.of(context);
+    const steps = [
+      'Escolha suas áreas de atuação abaixo e clique em "Salvar Configuração".',
+      'Abra uma área e crie sua primeira peça.',
+      'Adicione tópicos, preencha os dados do cliente e gere o documento.',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(24.0),
+      decoration: BoxDecoration(
+        color: theme.secondaryBackground,
+        borderRadius: BorderRadius.circular(16.0),
+        border: Border.all(color: theme.primary, width: 1.0),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Comece por aqui',
+            style: theme.titleMedium.override(
+              font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+              color: theme.primaryText,
+            ),
+          ),
+          for (var index = 0; index < steps.length; index++)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 24.0,
+                  height: 24.0,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: theme.primary, shape: BoxShape.circle),
+                  child: Text('${index + 1}', style: const TextStyle(color: Colors.white, fontSize: 12.0, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(width: 12.0),
+                Expanded(
+                  child: Text(
+                    steps[index],
+                    style: theme.bodyMedium.override(font: GoogleFonts.inter(), color: theme.primaryText),
+                  ),
+                ),
+              ],
+            ),
+        ].divide(const SizedBox(height: 12.0)),
+      ),
+    );
   }
 
   Widget _buildAreaConfigCard({
@@ -394,13 +449,102 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                           ),
                         ],
                       ),
+                      if (_savedAreas.isEmpty) _buildGettingStarted(),
+                      if (_savedAreas.isNotEmpty)
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Minhas Áreas',
+                                style: FlutterFlowTheme.of(context).titleMedium.override(
+                                      font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
+                                      color: FlutterFlowTheme.of(context).primaryText,
+                                    ),
+                              ),
+                            ],
+                          ),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              ..._savedAreas.map((area) {
+                                  final icon = _areaData[area]?['icon'] as IconData? ?? Icons.folder_rounded;
+                                  final topicsList = globalAreaDatabase[area]?['topics'] as List?;
+                                  final int topicCount = topicsList?.length ?? 0;
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: _buildActiveModuleCard(
+                                      name: area == 'Contratos' ? area : 'Direito $area',
+                                      icon: icon,
+                                      topicCount: topicCount,
+                                      onTap: () {
+                                        globalCurrentArea = area;
+                                        context.pushNamed(AreaWorkspaceWidget.routeName, queryParameters: {'area': area});
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                            ],
+                          ),
+                        ].divide(const SizedBox(height: 16.0)),
+                      ),
+                      if (_savedAreas.isNotEmpty)
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         mainAxisAlignment: MainAxisAlignment.start,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            'Configurações da Prática',
+                            'Ações Rápidas',
+                            style: FlutterFlowTheme.of(context).titleMedium.override(
+                                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
+                                  color: FlutterFlowTheme.of(context).primaryText,
+                                ),
+                          ),
+                          Row(
+                            mainAxisSize: MainAxisSize.max,
+                            children: [
+                              Expanded(
+                                flex: 1,
+                                child: InkWell(
+                                  onTap: () async => context.pushNamed(AddTopicModalWidget.routeName),
+                                  child: wrapWithModel(
+                                    model: _model.quickActionModel1,
+                                    updateCallback: () => safeSetState(() {}),
+                                    child: QuickActionWidget(
+                                      icon: Icon(Icons.add_box_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),
+                                      label: 'Novo Tópico',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ].divide(const SizedBox(height: 16.0)),
+                      ),
+                      if (_savedAreas.isNotEmpty)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => safeSetState(() => _areaSettingsOpen = !_areaSettingsOpen),
+                            icon: Icon(_areaSettingsOpen ? Icons.expand_less_rounded : Icons.tune_rounded, size: 18.0, color: FlutterFlowTheme.of(context).secondaryText),
+                            label: Text(_areaSettingsOpen ? 'Fechar ajuste de áreas' : 'Ajustar áreas', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+                          ),
+                        ),
+                      if (_showAreaSettings)
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Áreas de Atuação',
                             style: FlutterFlowTheme.of(context).titleMedium.override(
                                   font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
                                   color: FlutterFlowTheme.of(context).primaryText,
@@ -462,95 +606,6 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                                 ),
                               ),
                             ),
-                          ),
-                        ].divide(const SizedBox(height: 16.0)),
-                      ),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Ações Rápidas',
-                            style: FlutterFlowTheme.of(context).titleMedium.override(
-                                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
-                                  color: FlutterFlowTheme.of(context).primaryText,
-                                ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.max,
-                            children: [
-                              Expanded(
-                                flex: 1,
-                                child: InkWell(
-                                  onTap: () async => context.pushNamed(AddTopicModalWidget.routeName),
-                                  child: wrapWithModel(
-                                    model: _model.quickActionModel1,
-                                    updateCallback: () => safeSetState(() {}),
-                                    child: QuickActionWidget(
-                                      icon: Icon(Icons.add_box_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),
-                                      label: 'Novo Tópico',
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ].divide(const SizedBox(height: 16.0)),
-                      ),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Minhas Áreas',
-                                style: FlutterFlowTheme.of(context).titleMedium.override(
-                                      font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
-                                      color: FlutterFlowTheme.of(context).primaryText,
-                                    ),
-                              ),
-                            ],
-                          ),
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (_savedAreas.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 24.0),
-                                  child: Text(
-                                    'Nenhuma área selecionada.\nEscolha as áreas acima e clique em "Salvar Configuração".',
-                                    textAlign: TextAlign.center,
-                                    style: FlutterFlowTheme.of(context).bodyMedium.override(
-                                          font: GoogleFonts.inter(),
-                                          color: FlutterFlowTheme.of(context).secondaryText,
-                                        ),
-                                  ),
-                                )
-                              else
-                                ..._savedAreas.map((area) {
-                                  final icon = _areaData[area]?['icon'] as IconData? ?? Icons.folder_rounded;
-                                  final topicsList = globalAreaDatabase[area]?['topics'] as List?;
-                                  final int topicCount = topicsList?.length ?? 0;
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: _buildActiveModuleCard(
-                                      name: area == 'Contratos' ? area : 'Direito $area',
-                                      icon: icon,
-                                      topicCount: topicCount,
-                                      onTap: () {
-                                        globalCurrentArea = area;
-                                        context.pushNamed(AreaWorkspaceWidget.routeName, queryParameters: {'area': area});
-                                      },
-                                    ),
-                                  );
-                                }).toList(),
-                            ],
                           ),
                         ].divide(const SizedBox(height: 16.0)),
                       ),

@@ -69,6 +69,25 @@ class FakeRepository implements LibraryRepository {
     _maybeFail();
     calls.add('deleteTopic:$id');
   }
+
+  @override
+  Future<TopicKit> createKit({
+    required String userId,
+    required String area,
+    required String pecaName,
+    required String name,
+    required List<int> topicIds,
+  }) async {
+    _maybeFail();
+    calls.add('createKit:$name:$topicIds');
+    return TopicKit(id: 100, pecaName: pecaName, name: name, topicIds: topicIds);
+  }
+
+  @override
+  Future<void> deleteKit(int id) async {
+    _maybeFail();
+    calls.add('deleteKit:$id');
+  }
 }
 
 class FakeDraftStore implements DraftStore {
@@ -377,6 +396,117 @@ void main() {
       await vm.deleteTopic(1);
       expect(vm.selectedTopics, isEmpty);
       expect(vm.topicsOfSelectedPeca.map((t) => t.id), [2, 3]);
+    });
+  });
+
+  group('kits de tópicos', () {
+    const kit = TopicKit(id: 7, pecaName: 'PEÇA 1', name: 'Contestação', topicIds: [3, 1]);
+
+    void useKit() {
+      repository.library = AreaLibrary(
+        pecas: repository.library.pecas,
+        topics: repository.library.topics,
+        kits: const [kit, TopicKit(id: 8, pecaName: 'PEÇA 2', name: 'Outra', topicIds: [4])],
+      );
+    }
+
+    test('lista só os kits da peça selecionada', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      expect(vm.kitsOfSelectedPeca.map((k) => k.id), [7]);
+      vm.selectPeca('PEÇA 2');
+      expect(vm.kitsOfSelectedPeca.map((k) => k.id), [8]);
+    });
+
+    test('aplicar segue a ordem salva e troca a seleção', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      vm.toggleTopic(2);
+      expect(vm.applyKit(kit), 0);
+      expect(vm.selectedTopicIds, [3, 1]);
+      expect(vm.documentInput.topics.map((t) => t.title), ['Do pedido', 'Dos fatos']);
+    });
+
+    test('tópico excluído é ignorado e informado', () async {
+      const oldKit = TopicKit(id: 9, pecaName: 'PEÇA 1', name: 'Antigo', topicIds: [99, 2]);
+      final vm = build();
+      await vm.load();
+      expect(vm.availableTopicsInKit(oldKit), 1);
+      expect(vm.applyKit(oldKit), 1);
+      expect(vm.selectedTopicIds, [2]);
+    });
+
+    test('tópico de outra peça não entra', () async {
+      const mixed = TopicKit(id: 9, pecaName: 'PEÇA 1', name: 'Misto', topicIds: [4, 1]);
+      final vm = build();
+      await vm.load();
+      expect(vm.applyKit(mixed), 1);
+      expect(vm.selectedTopicIds, [1]);
+    });
+
+    test('aplicar grava o rascunho', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      vm.restoreDraft();
+      vm.applyKit(kit);
+      expect(drafts.guard, isTrue);
+    });
+
+    test('salvar guarda a seleção na ordem atual', () async {
+      final vm = build();
+      await vm.load();
+      vm.toggleTopic(3);
+      vm.toggleTopic(1);
+      await vm.saveSelectionAsKit('  Meu kit ');
+      expect(repository.calls, contains('createKit:Meu kit:[3, 1]'));
+      expect(vm.kitsOfSelectedPeca.single.name, 'Meu kit');
+    });
+
+    test('não salva sem nome ou sem seleção', () async {
+      final vm = build();
+      await vm.load();
+      await vm.saveSelectionAsKit('Sem seleção');
+      vm.toggleTopic(1);
+      await vm.saveSelectionAsKit('   ');
+      expect(repository.calls.where((call) => call.startsWith('createKit')), isEmpty);
+    });
+
+    test('falha ao salvar não adiciona o kit', () async {
+      final vm = build();
+      await vm.load();
+      vm.toggleTopic(1);
+      repository.failNext = true;
+      await expectLater(vm.saveSelectionAsKit('Kit'), throwsException);
+      expect(vm.kitsOfSelectedPeca, isEmpty);
+    });
+
+    test('excluir remove o kit sem mudar a seleção', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      vm.applyKit(kit);
+      await vm.deleteKit(7);
+      expect(vm.kitsOfSelectedPeca, isEmpty);
+      expect(vm.selectedTopicIds, [3, 1]);
+    });
+
+    test('renomear a peça leva os kits junto', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      await vm.updatePeca(oldName: 'PEÇA 1', rawName: 'NOVA', rawHeader: '');
+      expect(vm.kitsOfSelectedPeca.map((k) => k.id), [7]);
+    });
+
+    test('excluir a peça remove os kits dela', () async {
+      useKit();
+      final vm = build();
+      await vm.load();
+      await vm.deletePeca('PEÇA 1');
+      expect(vm.kitsOfSelectedPeca.map((k) => k.id), [8]);
     });
   });
 

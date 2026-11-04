@@ -414,6 +414,61 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     }
   }
 
+  void _applyKit(TopicKit kit) {
+    final missing = _vm.applyKit(kit);
+    _showMessage(missing == 0
+        ? 'Kit "${kit.name}" aplicado.'
+        : 'Kit "${kit.name}" aplicado. ${missing == 1 ? '1 tópico não existe mais' : '$missing tópicos não existem mais'}.');
+  }
+
+  void _showSaveKitDialog() {
+    final controller = TextEditingController();
+
+    Future<void> submit(BuildContext dialogContext) async {
+      if (controller.text.trim().isEmpty) return;
+      try {
+        await _vm.saveSelectionAsKit(controller.text);
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        _showMessage('Kit salvo com sucesso!', color: Colors.green);
+      } catch (e) {
+        _showError('Erro ao salvar kit', e);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: _dialogTitle('Salvar seleção como kit'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          onSubmitted: (_) => submit(dialogContext),
+          decoration: _dialogFieldDecoration(hint: 'Ex: Contestação Banco X'),
+          style: _dialogFieldStyle,
+        ),
+        actions: _dialogActions(dialogContext, 'Salvar', () => submit(dialogContext)),
+      ),
+    );
+  }
+
+  Future<void> _deleteKit(TopicKit kit) async {
+    final confirmed = await _confirm(
+      title: 'Excluir Kit',
+      message: 'Excluir o kit "${kit.name}"? Os tópicos não serão apagados.',
+      confirmLabel: 'Excluir',
+      color: Colors.red,
+    );
+    if (!confirmed) return;
+
+    try {
+      await _vm.deleteKit(kit.id);
+      _showMessage('Kit excluído.');
+    } catch (e) {
+      _showError('Erro ao excluir kit', e);
+    }
+  }
+
   Future<void> _clearClientData() async {
     final confirmed = await _confirm(
       title: 'Limpar dados',
@@ -892,6 +947,73 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         ),
       );
 
+  Widget _buildKitChip(TopicKit kit) {
+    final theme = FlutterFlowTheme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.secondaryBackground,
+        borderRadius: BorderRadius.circular(9999.0),
+        border: Border.all(color: theme.primary),
+      ),
+      padding: const EdgeInsets.only(left: 14.0, right: 6.0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => _applyKit(kit),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Text(
+                '${kit.name} (${_vm.availableTopicsInKit(kit)})',
+                style: theme.labelMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.w600), color: theme.primaryText),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Excluir kit',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close_rounded, size: 16.0, color: theme.secondaryText),
+            onPressed: () => _deleteKit(kit),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKitsSection() {
+    if (_vm.selectedPeca == null || _vm.topicsOfSelectedPeca.isEmpty) return const SizedBox.shrink();
+
+    final theme = FlutterFlowTheme.of(context);
+    final kits = _vm.kitsOfSelectedPeca;
+    final canSave = _vm.selectedTopicIds.isNotEmpty;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _sectionTitle('Kits de Tópicos'),
+            TextButton.icon(
+              onPressed: canSave ? _showSaveKitDialog : null,
+              icon: Icon(Icons.bookmark_add_outlined, size: 18.0, color: canSave ? theme.primary : theme.secondaryText),
+              label: Text('Salvar seleção', style: TextStyle(color: canSave ? theme.primary : theme.secondaryText)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8.0),
+        if (kits.isEmpty)
+          Text(
+            'Selecione os tópicos que costuma usar juntos e salve como kit para marcá-los com um clique.',
+            style: theme.bodySmall.override(font: GoogleFonts.inter(), color: theme.secondaryText),
+          )
+        else
+          Wrap(spacing: 8.0, runSpacing: 8.0, children: kits.map(_buildKitChip).toList()),
+      ],
+    );
+  }
+
   Widget _buildTopicsSection() {
     final theme = FlutterFlowTheme.of(context);
     final allTopics = _vm.topicsOfSelectedPeca;
@@ -1118,6 +1240,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
           _buildQuickActions(),
           _buildPecasSection(),
           _buildClientSection(),
+          _buildKitsSection(),
           _buildTopicsSection(),
           _buildOrderSection(),
         ].divide(const SizedBox(height: 24.0)),
