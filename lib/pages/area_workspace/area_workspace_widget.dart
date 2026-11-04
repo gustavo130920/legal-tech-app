@@ -1,18 +1,19 @@
-import '/core/errors/user_messages.dart';
 import '/components/quick_action_card_widget.dart';
+import '/core/errors/user_messages.dart';
+import '/core/legal/cnj_number.dart';
+import '/features/drafting/domain/document_composer.dart';
+import '/features/drafting/ui/workspace_view_model.dart';
+import '/features/library/data/library_repository.dart';
+import '/features/library/domain/library_models.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
+import '/platform/document_actions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '/core/legal/cnj_number.dart';
-import '/features/drafting/domain/document_composer.dart';
-import '/features/drafting/domain/workspace_draft.dart';
-import '/platform/browser_session.dart';
-import '/platform/document_actions.dart';
 import 'area_workspace_model.dart';
 import '../add_topic_modal/add_topic_modal_widget.dart';
 import '../main_menu/main_menu_widget.dart';
@@ -21,6 +22,7 @@ export 'area_workspace_model.dart';
 import '../../app_state.dart';
 
 const Color _pendingColor = Color(0xFFF59E0B);
+const double _twoColumnWidth = 1000.0;
 
 class AreaWorkspaceWidget extends StatefulWidget {
   const AreaWorkspaceWidget({super.key, this.area});
@@ -39,58 +41,534 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
   late AreaWorkspaceModel _model;
   final scaffoldKey = GlobalKey<ScaffoldState>();
 
-  late TextEditingController _enderecamentoController;
-  late TextEditingController _nomeController;
-  late TextEditingController _cpfController;
-  late TextEditingController _reuController;
-  late TextEditingController _processoController;
+  WorkspaceViewModel? _viewModel;
 
-  Set<int>? _selectedTopics;
-  Set<int> get selectedTopics => _selectedTopics ??= {};
+  late final Map<ClientField, TextEditingController> _fieldControllers;
+  final Map<String, TextEditingController> _customControllers = {};
+  final TextEditingController _searchController = TextEditingController();
 
-  Map<String, TextEditingController> _dynamicControllers = {};
-  final Map<String, String> _pecaHeaders = {};
-
-  String? _selectedPeca;
-  bool _isLoadingData = false;
-
-  // O rascunho só é gravado depois de restaurado, para não ser sobrescrito.
-  bool _draftChecked = false;
+  WorkspaceViewModel get _vm => _viewModel!;
+  TextEditingController get _processoController => _fieldControllers[ClientField.processo]!;
 
   @override
   void initState() {
     super.initState();
     _model = createModel(context, () => AreaWorkspaceModel());
 
-    _enderecamentoController = TextEditingController();
-    _nomeController = TextEditingController();
-    _cpfController = TextEditingController();
-    _reuController = TextEditingController();
-    _processoController = TextEditingController();
-
-    _enderecamentoController.addListener(_onFieldChanged);
-    _nomeController.addListener(_onFieldChanged);
-    _cpfController.addListener(_onFieldChanged);
-    _reuController.addListener(_onFieldChanged);
-    _processoController.addListener(_onFieldChanged);
+    _fieldControllers = {
+      for (final field in ClientField.values) field: TextEditingController(),
+    };
 
     final area = widget.area;
     if (area != null && globalAreaDatabase.containsKey(area)) {
       globalCurrentArea = area;
     }
 
-    if (globalAreaDatabase.containsKey(globalCurrentArea)) {
-      _loadDataFromSupabase();
-    } else {
+    if (!globalAreaDatabase.containsKey(globalCurrentArea)) {
       // Sem área definida não há como saber o que abrir: nunca assumir uma.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) context.goNamed(MainMenuWidget.routeName);
       });
+      return;
+    }
+
+    _viewModel = WorkspaceViewModel(
+      repository: SupabaseLibraryRepository(Supabase.instance.client),
+      area: globalCurrentArea,
+      currentUserId: () => Supabase.instance.client.auth.currentUser?.id,
+    )..addListener(_onViewModelChanged);
+
+    _fieldControllers.forEach((field, controller) {
+      controller.addListener(() => _viewModel?.setField(field, controller.text));
+    });
+    _searchController.addListener(() => _viewModel?.setSearchQuery(_searchController.text));
+
+    _initialize();
+  }
+
+  @override
+  void dispose() {
+    _viewModel?.removeListener(_onViewModelChanged);
+    _viewModel?.dispose();
+    _fieldControllers.values.forEach((controller) => controller.dispose());
+    _customControllers.values.forEach((controller) => controller.dispose());
+    _searchController.dispose();
+    _model.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _vm.load();
+    } catch (e) {
+      _showError('Erro ao carregar seus dados', e);
+    }
+    if (!mounted) return;
+
+    final restored = _vm.restoreDraft();
+    _syncControllersFromViewModel();
+    if (restored) {
+      _showMessage('Recuperamos o que você estava preenchendo nesta sessão.');
+    }
+  }
+
+  void _onViewModelChanged() {
+    _syncCustomControllers();
+    if (_searchController.text != _vm.searchQuery) {
+      _searchController.text = _vm.searchQuery;
+    }
+    safeSetState(() {});
+  }
+
+  void _syncCustomControllers() {
+    final names = _vm.customVariableNames.toSet();
+
+    for (final name in names) {
+      _customControllers.putIfAbsent(name, () {
+        final controller = TextEditingController(text: _vm.customValue(name));
+        controller.addListener(() => _viewModel?.setCustomValue(name, controller.text));
+        return controller;
+      });
+    }
+
+    final removed = _customControllers.keys.where((name) => !names.contains(name)).toList();
+    for (final name in removed) {
+      final controller = _customControllers.remove(name)!;
+      // O campo ainda está na tela até a próxima reconstrução.
+      WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    }
+  }
+
+  void _syncControllersFromViewModel() {
+    _fieldControllers.forEach((field, controller) {
+      final value = _vm.fieldValue(field);
+      if (controller.text != value) controller.text = value;
+    });
+    _syncCustomControllers();
+    _customControllers.forEach((name, controller) {
+      final value = _vm.customValue(name);
+      if (controller.text != value) controller.text = value;
+    });
+  }
+
+  void _showMessage(String message, {Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
+  }
+
+  void _showError(String action, Object error) {
+    _showMessage('$action. ${friendlyError(error)}', color: Colors.red);
+  }
+
+  Future<void> _openNewTopic() async {
+    await context.pushNamed(AddTopicModalWidget.routeName);
+    if (!mounted) return;
+    try {
+      await _vm.load();
+    } catch (e) {
+      _showError('Erro ao carregar seus dados', e);
+    }
+  }
+
+  InputDecoration _dialogFieldDecoration({String? hint, String? label, String? helper}) {
+    final theme = FlutterFlowTheme.of(context);
+    return InputDecoration(
+      hintText: hint,
+      labelText: label,
+      helperText: helper,
+      helperMaxLines: 3,
+      alignLabelWithHint: true,
+      labelStyle: TextStyle(color: theme.secondaryText),
+      hintStyle: TextStyle(color: theme.secondaryText),
+      helperStyle: TextStyle(color: theme.secondaryText),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: theme.alternate, width: 1.0),
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: theme.primary, width: 1.5),
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      filled: true,
+      fillColor: theme.primaryBackground,
+    );
+  }
+
+  TextStyle get _dialogFieldStyle => FlutterFlowTheme.of(context).bodyMedium.override(
+        font: GoogleFonts.inter(),
+        color: FlutterFlowTheme.of(context).primaryText,
+      );
+
+  Widget _dialogTitle(String text) => Text(
+        text,
+        style: FlutterFlowTheme.of(context).titleMedium.override(
+              font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+              color: FlutterFlowTheme.of(context).primaryText,
+            ),
+      );
+
+  List<Widget> _dialogActions(BuildContext dialogContext, String confirmLabel, VoidCallback onConfirm) => [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+        ),
+        ElevatedButton(
+          onPressed: onConfirm,
+          style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
+          child: Text(confirmLabel, style: const TextStyle(color: Colors.white)),
+        ),
+      ];
+
+  Future<bool> _confirm({required String title, required String message, required String confirmLabel, Color? color}) async {
+    final theme = FlutterFlowTheme.of(context);
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: theme.secondaryBackground,
+        title: Text(title, style: TextStyle(color: theme.primaryText, fontWeight: FontWeight.bold)),
+        content: Text(message, style: TextStyle(color: theme.secondaryText)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: color ?? theme.primary),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(confirmLabel, style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    return result == true && mounted;
+  }
+
+  void _showAddPecaDialog() {
+    final controller = TextEditingController();
+
+    Future<void> submit(BuildContext dialogContext) async {
+      if (controller.text.trim().isEmpty) return;
+      try {
+        await _vm.createPeca(controller.text);
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        _showMessage('Peça criada com sucesso!', color: Colors.green);
+      } catch (e) {
+        _showError('Erro ao salvar peça', e);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: _dialogTitle('Nova Peça'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          onSubmitted: (_) => submit(dialogContext),
+          decoration: _dialogFieldDecoration(hint: 'Ex: Réplica, Procuração, Recurso...'),
+          style: _dialogFieldStyle,
+        ),
+        actions: _dialogActions(dialogContext, 'Criar', () => submit(dialogContext)),
+      ),
+    );
+  }
+
+  void _showEditPecaDialog(PecaItem peca) {
+    final nameController = TextEditingController(text: peca.name);
+    final headerController = TextEditingController(text: _vm.headerTemplateFor(peca.name));
+
+    Future<void> submit(BuildContext dialogContext) async {
+      try {
+        await _vm.updatePeca(
+          oldName: peca.name,
+          rawName: nameController.text,
+          rawHeader: headerController.text,
+        );
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        _showMessage('Peça atualizada com sucesso!', color: Colors.green);
+      } catch (e) {
+        _showError('Erro ao atualizar peça', e);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: _dialogTitle('Editar Peça'),
+        content: SizedBox(
+          width: 560.0,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  decoration: _dialogFieldDecoration(label: 'Nome da peça'),
+                  style: _dialogFieldStyle,
+                ),
+                const SizedBox(height: 16.0),
+                TextField(
+                  controller: headerController,
+                  minLines: 6,
+                  maxLines: 12,
+                  decoration: _dialogFieldDecoration(
+                    label: 'Cabeçalho da peça',
+                    helper: 'Separe os parágrafos com uma linha em branco. Use variáveis como {{ENDEREÇAMENTO}}, {{PROCESSO}}, {{NOME_CLIENTE}}, {{REU}} e {{CPF}}.',
+                  ),
+                  style: _dialogFieldStyle,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: _dialogActions(dialogContext, 'Salvar', () => submit(dialogContext)),
+      ),
+    );
+  }
+
+  Future<void> _deletePeca(PecaItem peca) async {
+    final confirmed = await _confirm(
+      title: 'Excluir Peça',
+      message: 'Tem certeza que deseja excluir "${peca.name}"? Todos os tópicos desta peça também serão apagados.',
+      confirmLabel: 'Excluir',
+      color: Colors.red,
+    );
+    if (!confirmed) return;
+
+    try {
+      await _vm.deletePeca(peca.name);
+      _showMessage('Peça excluída com sucesso!', color: Colors.green);
+    } catch (e) {
+      _showError('Erro ao excluir peça', e);
+    }
+  }
+
+  void _showEditTopicDialog(TopicItem topic) {
+    final titleController = TextEditingController(text: topic.title);
+    final contentController = TextEditingController(text: topic.content);
+
+    Future<void> submit(BuildContext dialogContext) async {
+      if (titleController.text.trim().isEmpty || contentController.text.trim().isEmpty) return;
+      try {
+        await _vm.updateTopic(
+          id: topic.id,
+          rawTitle: titleController.text,
+          rawContent: contentController.text,
+        );
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        _showMessage('Tópico atualizado com sucesso!', color: Colors.green);
+      } catch (e) {
+        _showError('Erro ao atualizar tópico', e);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: _dialogTitle('Editar Tópico'),
+        content: SizedBox(
+          width: 560.0,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleController,
+                  autofocus: true,
+                  decoration: _dialogFieldDecoration(label: 'Título do Tópico'),
+                  style: _dialogFieldStyle,
+                ),
+                const SizedBox(height: 16.0),
+                TextField(
+                  controller: contentController,
+                  maxLines: 6,
+                  decoration: _dialogFieldDecoration(label: 'Conteúdo do Modelo'),
+                  style: _dialogFieldStyle,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: _dialogActions(dialogContext, 'Salvar', () => submit(dialogContext)),
+      ),
+    );
+  }
+
+  Future<void> _deleteTopic(TopicItem topic) async {
+    final confirmed = await _confirm(
+      title: 'Excluir Tópico',
+      message: 'Tem certeza que deseja excluir "${topic.title}"?',
+      confirmLabel: 'Excluir',
+      color: Colors.red,
+    );
+    if (!confirmed) return;
+
+    try {
+      await _vm.deleteTopic(topic.id);
+      _showMessage('Tópico excluído com sucesso!', color: Colors.green);
+    } catch (e) {
+      _showError('Erro ao excluir tópico', e);
+    }
+  }
+
+  void _applyKit(TopicKit kit) {
+    final missing = _vm.applyKit(kit);
+    _showMessage(missing == 0
+        ? 'Kit "${kit.name}" aplicado.'
+        : 'Kit "${kit.name}" aplicado. ${missing == 1 ? '1 tópico não existe mais' : '$missing tópicos não existem mais'}.');
+  }
+
+  void _showSaveKitDialog() {
+    final controller = TextEditingController();
+
+    Future<void> submit(BuildContext dialogContext) async {
+      if (controller.text.trim().isEmpty) return;
+      try {
+        await _vm.saveSelectionAsKit(controller.text);
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        _showMessage('Kit salvo com sucesso!', color: Colors.green);
+      } catch (e) {
+        _showError('Erro ao salvar kit', e);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: _dialogTitle('Salvar seleção como kit'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          onSubmitted: (_) => submit(dialogContext),
+          decoration: _dialogFieldDecoration(hint: 'Ex: Contestação Banco X'),
+          style: _dialogFieldStyle,
+        ),
+        actions: _dialogActions(dialogContext, 'Salvar', () => submit(dialogContext)),
+      ),
+    );
+  }
+
+  Future<void> _deleteKit(TopicKit kit) async {
+    final confirmed = await _confirm(
+      title: 'Excluir Kit',
+      message: 'Excluir o kit "${kit.name}"? Os tópicos não serão apagados.',
+      confirmLabel: 'Excluir',
+      color: Colors.red,
+    );
+    if (!confirmed) return;
+
+    try {
+      await _vm.deleteKit(kit.id);
+      _showMessage('Kit excluído.');
+    } catch (e) {
+      _showError('Erro ao excluir kit', e);
+    }
+  }
+
+  Future<void> _clearClientData() async {
+    final confirmed = await _confirm(
+      title: 'Limpar dados',
+      message: 'Os dados do cliente e os tópicos selecionados serão removidos para iniciar uma nova peça. As peças e os tópicos salvos não são apagados.',
+      confirmLabel: 'Limpar',
+    );
+    if (!confirmed) return;
+
+    _vm.clearClientData();
+    _syncControllersFromViewModel();
+  }
+
+  void _copyToClipboardAsHtml() {
+    if (_vm.selectedTopics.isEmpty) {
+      _showMessage('Selecione tópicos antes de copiar.');
+      return;
+    }
+    _runAfterReview('Copiar mesmo assim', _copyDocument);
+  }
+
+  void _downloadAsDoc() {
+    if (_vm.selectedTopics.isEmpty) {
+      _showMessage('Selecione tópicos antes de gerar o documento.');
+      return;
+    }
+    _runAfterReview('Gerar mesmo assim', _generateFile);
+  }
+
+  // A ação roda dentro do clique, porque o navegador só libera a área de
+  // transferência durante um gesto do usuário.
+  void _runAfterReview(String proceedLabel, VoidCallback action) {
+    // A conferência do número CNJ é só informativa: qualquer número pode ser usado.
+    final pending = _vm.pendingFields;
+    if (pending.isEmpty) {
+      action();
+      return;
+    }
+
+    final theme = FlutterFlowTheme.of(context);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: theme.secondaryBackground,
+        title: Text('Documento com pendências', style: TextStyle(color: theme.primaryText, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Confira antes de usar este documento:', style: TextStyle(color: theme.secondaryText)),
+            const SizedBox(height: 12.0),
+            ...pending.map((field) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4.0),
+                  child: Text('• $field: não preenchido', style: TextStyle(color: theme.primaryText)),
+                )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              action();
+            },
+            child: Text(proceedLabel, style: TextStyle(color: theme.secondaryText)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: theme.primary),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Voltar e preencher', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _copyDocument() {
+    final input = _vm.documentInput;
+    final plainText = composePlainText(input);
+
+    if (copyRichTextToClipboard(html: composeHtml(input), plainText: plainText)) {
+      _showMessage('Documento copiado. Cole no Word ou no Google Docs.');
+    } else {
+      Clipboard.setData(ClipboardData(text: plainText));
+      _showMessage('Copiado em formato simples (navegador bloqueou formatação).');
+    }
+  }
+
+  void _generateFile() {
+    final downloaded = downloadWordDocument(
+      fileName: '${_vm.selectedPeca?.replaceAll(' ', '_')}.doc',
+      content: composeWordDocument(_vm.documentInput),
+    );
+    if (downloaded) {
+      _showMessage('Arquivo gerado. Confira a pasta de downloads.');
+    } else {
+      _showMessage('Não foi possível gerar o arquivo. Tente copiar o documento.', color: Colors.red);
     }
   }
 
   String get _enderecamentoHint {
-    switch (globalCurrentArea) {
+    switch (_vm.area) {
       case 'Trabalhista':
         return 'Ex: Vara do Trabalho de São Paulo/SP';
       case 'Penal':
@@ -106,803 +584,564 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     }
   }
 
-  @override
-  void dispose() {
-    setLeaveGuard(false);
-    _enderecamentoController.dispose();
-    _nomeController.dispose();
-    _cpfController.dispose();
-    _reuController.dispose();
-    _processoController.dispose();
-    _dynamicControllers.values.forEach((ctrl) => ctrl.dispose());
-    _model.dispose();
-    super.dispose();
-  }
+  Widget _sectionTitle(String text) => Text(
+        text,
+        style: FlutterFlowTheme.of(context).titleMedium.override(
+              font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+              color: FlutterFlowTheme.of(context).primaryText,
+            ),
+      );
 
-  Future<void> _loadDataFromSupabase() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    final area = globalCurrentArea;
-
-    // Resposta de uma sessão ou área anterior nunca pode entrar na memória atual.
-    bool isStale() =>
-        !mounted ||
-        globalCurrentArea != area ||
-        Supabase.instance.client.auth.currentUser?.id != user.id;
-
-    safeSetState(() {
-      _isLoadingData = true;
-    });
-
-    try {
-      final pecasResponse = await Supabase.instance.client
-          .from('pecas')
-          .select('peca_name, header_template')
-          .eq('user_id', user.id)
-          .eq('area_name', area)
-          .order('id', ascending: true);
-
-      final topicsResponse = await Supabase.instance.client
-          .from('topics')
-          .select()
-          .eq('user_id', user.id)
-          .eq('area_name', area)
-          .order('id', ascending: true);
-
-      if (isStale()) return;
-
-      final List<String> loadedPecas = (pecasResponse as List)
-          .map((item) => item['peca_name'].toString())
-          .toList();
-
-      _pecaHeaders
-        ..clear()
-        ..addEntries((pecasResponse as List)
-            .where((item) => item['header_template'] != null)
-            .map((item) => MapEntry(item['peca_name'].toString(), item['header_template'].toString())));
-
-      final currentAreaMap = globalAreaDatabase[area];
-      if (currentAreaMap != null) {
-        currentAreaMap['pecas'] = <String>[];
-        final List<String> currentPecas = (currentAreaMap['pecas'] as List).cast<String>();
-        currentPecas.addAll(loadedPecas);
-      }
-
-      final List<Map<String, dynamic>> loadedTopics = (topicsResponse as List).map((item) {
-        return {
-          'id': item['id'],
-          'title': item['title'],
-          'content': item['content'],
-          'preview': item['preview'],
-          'variables': (item['variables'] as List).cast<String>(),
-          'peca': item['peca_name'],
-        };
-      }).toList();
-
-      if (globalAreaDatabase[area] != null) {
-        globalAreaDatabase[area]['topics'] = loadedTopics;
-      }
-
-      if (currentAreaMap != null && (currentAreaMap['pecas'] as List).isNotEmpty) {
-        if (!loadedPecas.contains(_selectedPeca)) {
-          _selectedPeca = loadedPecas.first;
-        }
-      } else {
-        _selectedPeca = null;
-      }
-      
-      globalSelectedPeca = _selectedPeca;
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao carregar seus dados. ${friendlyError(e)}'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        safeSetState(() => _isLoadingData = false);
-        _updateDynamicFields();
-        if (!_draftChecked) {
-          _restoreDraft();
-          _draftChecked = true;
-          _saveDraft();
-        }
-      }
-    }
-  }
-
-  void _onFieldChanged() {
-    safeSetState(() {});
-    _saveDraft();
-  }
-
-  void _saveDraft() {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (!_draftChecked || user == null) return;
-
-    final key = workspaceDraftKey(user.id, globalCurrentArea);
-    final draft = WorkspaceDraft(
-      peca: _selectedPeca,
-      topicIds: selectedTopics.toList(),
-      enderecamento: _enderecamentoController.text,
-      nomeCliente: _nomeController.text,
-      cpf: _cpfController.text,
-      reu: _reuController.text,
-      processo: _processoController.text,
-      customVariables: _dynamicControllers.map((name, controller) => MapEntry(name, controller.text)),
-    );
-
-    if (draft.isEmpty) {
-      removeDraft(key);
-      setLeaveGuard(false);
-    } else {
-      writeDraft(key, draft.encode());
-      setLeaveGuard(true);
-    }
-  }
-
-  void _restoreDraft() {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    final draft = WorkspaceDraft.decode(readDraft(workspaceDraftKey(user.id, globalCurrentArea)));
-    if (draft == null || draft.isEmpty) return;
-
-    final currentArea = globalAreaDatabase[globalCurrentArea];
-    final pecas = (currentArea['pecas'] as List).cast<String>();
-    if (pecas.contains(draft.peca)) {
-      _selectedPeca = draft.peca;
-      globalSelectedPeca = draft.peca;
-    }
-
-    final topicsOfPeca = (currentArea['topics'] as List<Map<String, dynamic>>)
-        .where((topic) => topic['peca'] == _selectedPeca)
-        .map((topic) => topic['id'] as int)
-        .toSet();
-
-    safeSetState(() {
-      selectedTopics
-        ..clear()
-        ..addAll(draft.topicIds.where(topicsOfPeca.contains));
-      _enderecamentoController.text = draft.enderecamento;
-      _nomeController.text = draft.nomeCliente;
-      _cpfController.text = draft.cpf;
-      _reuController.text = draft.reu;
-      _processoController.text = draft.processo;
-      _updateDynamicFields();
-      draft.customVariables.forEach((name, value) => _dynamicControllers[name]?.text = value);
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Recuperamos o que você estava preenchendo nesta sessão.')),
-    );
-  }
-
-  Future<void> _clearClientData() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-        title: Text('Limpar dados', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
-        content: Text('Os dados do cliente e os tópicos selecionados serão removidos para iniciar uma nova peça. As peças e os tópicos salvos não são apagados.', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Limpar', style: TextStyle(color: Colors.white)),
-          ),
-        ],
+  Widget _checkMark({required bool selected, int? position, double size = 22.0}) {
+    final theme = FlutterFlowTheme.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: selected ? theme.primary : Colors.transparent,
+        borderRadius: BorderRadius.circular(6.0),
+        border: Border.all(color: selected ? theme.primary : theme.alternate, width: 1.5),
       ),
-    );
-
-    if (confirm != true || !mounted) return;
-
-    safeSetState(() {
-      _enderecamentoController.clear();
-      _nomeController.clear();
-      _cpfController.clear();
-      _reuController.clear();
-      _processoController.clear();
-      selectedTopics.clear();
-      _dynamicControllers.forEach((_, controller) => controller.dispose());
-      _dynamicControllers.clear();
-      _updateDynamicFields();
-    });
-  }
-
-  void _changePeca(String newPeca) {
-    if (_selectedPeca == newPeca) return;
-    safeSetState(() {
-      _selectedPeca = newPeca;
-      globalSelectedPeca = newPeca;
-      selectedTopics.clear();
-      _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
-      _dynamicControllers.clear();
-      _updateDynamicFields();
-    });
-  }
-
-  void _showAddPecaDialog() {
-    final TextEditingController pecaController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-          title: Text(
-            'Nova Peça',
-            style: FlutterFlowTheme.of(context).titleMedium.override(
-                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                  color: FlutterFlowTheme.of(context).primaryText,
-                ),
-          ),
-          content: TextField(
-            controller: pecaController,
-            autofocus: true,
-            onSubmitted: (_) => _submitAddPeca(pecaController.text),
-            decoration: InputDecoration(
-              hintText: 'Ex: Réplica, Procuração, Recurso...',
-              hintStyle: FlutterFlowTheme.of(context).bodyMedium.override(
-                    font: GoogleFonts.inter(),
-                    color: FlutterFlowTheme.of(context).secondaryText,
-                  ),
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              filled: true,
-              fillColor: FlutterFlowTheme.of(context).primaryBackground,
-            ),
-            style: FlutterFlowTheme.of(context).bodyMedium.override(
-                  font: GoogleFonts.inter(),
-                  color: FlutterFlowTheme.of(context).primaryText,
-                ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-            ),
-            ElevatedButton(
-              onPressed: () => _submitAddPeca(pecaController.text),
-              style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
-              child: const Text('Criar', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
+      alignment: Alignment.center,
+      child: !selected
+          ? null
+          : position != null
+              ? Text('$position', style: const TextStyle(color: Colors.white, fontSize: 12.0, fontWeight: FontWeight.bold))
+              : const Icon(Icons.check_rounded, color: Colors.white, size: 14.0),
     );
   }
 
-  Future<void> _submitAddPeca(String nameRaw) async {
-    if (nameRaw.trim().isEmpty) return;
-    final newPecaName = nameRaw.trim().toUpperCase();
-    final user = Supabase.instance.client.auth.currentUser;
+  Widget _buildPecaCard(PecaItem peca) {
+    final theme = FlutterFlowTheme.of(context);
+    final isSelected = _vm.selectedPeca == peca.name;
 
-    if (user != null) {
-      try {
-        await Supabase.instance.client.from('pecas').insert({
-          'user_id': user.id,
-          'area_name': globalCurrentArea,
-          'peca_name': newPecaName,
-        });
-        
-        safeSetState(() {
-          (globalAreaDatabase[globalCurrentArea]['pecas'] as List).add(newPecaName);
-          _changePeca(newPecaName);
-        });
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça criada com sucesso!'), backgroundColor: Colors.green));
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao salvar peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
-      }
-    }
-  }
-
-  void _showEditPecaDialog(String oldName) {
-    final TextEditingController pecaController = TextEditingController(text: oldName);
-    final TextEditingController headerController = TextEditingController(
-      text: _pecaHeaders[oldName] ?? defaultHeaderForArea(globalCurrentArea),
-    );
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-          title: Text(
-            'Editar Peça',
-            style: FlutterFlowTheme.of(context).titleMedium.override(
-                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                  color: FlutterFlowTheme.of(context).primaryText,
-                ),
-          ),
-          content: SizedBox(
-            width: 560.0,
-            child: SingleChildScrollView(
-              child: Column(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      decoration: BoxDecoration(
+        color: theme.primaryBackground,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: isSelected ? theme.primary : theme.alternate, width: isSelected ? 1.5 : 1.0),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: () => _vm.selectPeca(peca.name),
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: pecaController,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      labelText: 'Nome da peça',
-                      labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      filled: true,
-                      fillColor: FlutterFlowTheme.of(context).primaryBackground,
+                  _checkMark(selected: isSelected, size: 20.0),
+                  const SizedBox(width: 8.0),
+                  Text(
+                    peca.name,
+                    style: theme.labelMedium.override(
+                      font: GoogleFonts.inter(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500),
+                      color: isSelected ? theme.primaryText : theme.secondaryText,
                     ),
-                    style: FlutterFlowTheme.of(context).bodyMedium.override(
-                          font: GoogleFonts.inter(),
-                          color: FlutterFlowTheme.of(context).primaryText,
-                        ),
-                  ),
-                  const SizedBox(height: 16.0),
-                  TextField(
-                    controller: headerController,
-                    minLines: 6,
-                    maxLines: 12,
-                    decoration: InputDecoration(
-                      labelText: 'Cabeçalho da peça',
-                      alignLabelWithHint: true,
-                      helperText: 'Separe os parágrafos com uma linha em branco. Use variáveis como {{ENDEREÇAMENTO}}, {{PROCESSO}}, {{NOME_CLIENTE}}, {{REU}} e {{CPF}}.',
-                      helperMaxLines: 3,
-                      labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
-                      helperStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      filled: true,
-                      fillColor: FlutterFlowTheme.of(context).primaryBackground,
-                    ),
-                    style: FlutterFlowTheme.of(context).bodyMedium.override(
-                          font: GoogleFonts.inter(),
-                          color: FlutterFlowTheme.of(context).primaryText,
-                        ),
                   ),
                 ],
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+            const SizedBox(width: 8.0),
+            InkWell(
+              onTap: () => _showEditPecaDialog(peca),
+              child: Icon(Icons.edit_outlined, size: 16.0, color: theme.secondaryText),
             ),
-            ElevatedButton(
-              onPressed: () => _submitEditPeca(oldName, pecaController.text, headerController.text),
-              style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
-              child: const Text('Salvar', style: TextStyle(color: Colors.white)),
+            const SizedBox(width: 6.0),
+            InkWell(
+              onTap: () => _deletePeca(peca),
+              child: const Icon(Icons.delete_outline_rounded, size: 16.0, color: Colors.redAccent),
             ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _submitEditPeca(String oldName, String newNameRaw, String headerRaw) async {
-    final newName = newNameRaw.trim().toUpperCase();
-    final headerText = headerRaw.trim();
-    // Guardar o texto padrão faria a peça não receber correções futuras dele.
-    final newHeader = headerText.isEmpty || headerText == defaultHeaderForArea(globalCurrentArea) ? null : headerText;
-
-    if (newName.isEmpty || (newName == oldName && newHeader == _pecaHeaders[oldName])) {
-      Navigator.pop(context);
-      return;
-    }
-
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    try {
-      await Supabase.instance.client.from('pecas').update({'peca_name': newName, 'header_template': newHeader}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
-      if (newName != oldName) {
-        await Supabase.instance.client.from('topics').update({'peca_name': newName}).eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', oldName);
-      }
-
-      safeSetState(() {
-        _pecaHeaders.remove(oldName);
-        if (newHeader != null) _pecaHeaders[newName] = newHeader;
-
-        final pecasList = (globalAreaDatabase[globalCurrentArea]['pecas'] as List);
-        final idx = pecasList.indexOf(oldName);
-        if (idx != -1) pecasList[idx] = newName;
-
-        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
-        for (var t in topicsList) {
-          if (t['peca'] == oldName) t['peca'] = newName;
-        }
-
-        if (_selectedPeca == oldName) {
-          _selectedPeca = newName;
-          globalSelectedPeca = newName;
-        }
-        _updateDynamicFields();
-      });
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça atualizada com sucesso!'), backgroundColor: Colors.green));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
-    }
-  }
-
-  Future<void> _deletePeca(String pecaName) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-        title: Text('Excluir Peça', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
-        content: Text('Tem certeza que deseja excluir "$pecaName"? Todos os tópicos desta peça também serão apagados.', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    try {
-      await Supabase.instance.client.from('topics').delete().eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', pecaName);
-      await Supabase.instance.client.from('pecas').delete().eq('user_id', user.id).eq('area_name', globalCurrentArea).eq('peca_name', pecaName);
-
-      safeSetState(() {
-        _pecaHeaders.remove(pecaName);
-        (globalAreaDatabase[globalCurrentArea]['pecas'] as List).remove(pecaName);
-        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
-        topicsList.removeWhere((t) => t['peca'] == pecaName);
-
-        final remainingPecas = (globalAreaDatabase[globalCurrentArea]['pecas'] as List).cast<String>();
-        if (_selectedPeca == pecaName) {
-          _selectedPeca = remainingPecas.isNotEmpty ? remainingPecas.first : null;
-          globalSelectedPeca = _selectedPeca;
-          selectedTopics.clear();
-          _dynamicControllers.forEach((_, ctrl) => ctrl.dispose());
-          _dynamicControllers.clear();
-        }
-      });
-      _updateDynamicFields();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça excluída com sucesso!'), backgroundColor: Colors.green));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
-    }
-  }
-
-  void _showEditTopicDialog(Map<String, dynamic> topic) {
-    final titleCtrl = TextEditingController(text: topic['title']);
-    final contentCtrl = TextEditingController(text: topic['content']);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-          title: Text(
-            'Editar Tópico',
-            style: FlutterFlowTheme.of(context).titleMedium.override(
-                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                  color: FlutterFlowTheme.of(context).primaryText,
-                ),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleCtrl,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'Título do Tópico',
-                    labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
-                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate)),
-                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary)),
-                  ),
-                  style: TextStyle(color: FlutterFlowTheme.of(context).primaryText),
-                ),
-                const SizedBox(height: 16.0),
-                TextField(
-                  controller: contentCtrl,
-                  maxLines: 6,
-                  decoration: InputDecoration(
-                    labelText: 'Conteúdo do Modelo',
-                    labelStyle: TextStyle(color: FlutterFlowTheme.of(context).secondaryText),
-                    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate)),
-                    focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary)),
-                  ),
-                  style: TextStyle(color: FlutterFlowTheme.of(context).primaryText),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancelar', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-            ),
-            ElevatedButton(
-              onPressed: () => _submitEditTopic(topic['id'], titleCtrl.text, contentCtrl.text),
-              style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
-              child: const Text('Salvar', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _submitEditTopic(int id, String titleRaw, String contentRaw) async {
-    final title = titleRaw.trim();
-    final content = contentRaw.trim();
-
-    if (title.isEmpty || content.isEmpty) return;
-
-    try {
-      final extractedVars = extractVariables(content);
-      final previewText = topicPreview(content);
-
-      await Supabase.instance.client.from('topics').update({
-        'title': title,
-        'content': content,
-        'preview': previewText,
-        'variables': extractedVars,
-      }).eq('id', id);
-
-      safeSetState(() {
-        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
-        final idx = topicsList.indexWhere((t) => t['id'] == id);
-        if (idx != -1) {
-          topicsList[idx]['title'] = title;
-          topicsList[idx]['content'] = content;
-          topicsList[idx]['preview'] = previewText;
-          topicsList[idx]['variables'] = extractedVars;
-        }
-        _updateDynamicFields();
-      });
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico atualizado com sucesso!'), backgroundColor: Colors.green));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar tópico. ${friendlyError(e)}'), backgroundColor: Colors.red));
-    }
-  }
-
-  Future<void> _deleteTopic(int topicId, String topicTitle) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-        title: Text('Excluir Tópico', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
-        content: Text('Tem certeza que deseja excluir "$topicTitle"?', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      await Supabase.instance.client.from('topics').delete().eq('id', topicId);
-
-      safeSetState(() {
-        final topicsList = (globalAreaDatabase[globalCurrentArea]['topics'] as List);
-        topicsList.removeWhere((t) => t['id'] == topicId);
-        selectedTopics.remove(topicId);
-        _updateDynamicFields();
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico excluído com sucesso!'), backgroundColor: Colors.green));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir tópico. ${friendlyError(e)}'), backgroundColor: Colors.red));
-    }
-  }
-
-  void _updateDynamicFields() {
-    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
-    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
-    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
-
-    Set<String> neededVars = extractVariables(_currentHeaderTemplate).toSet();
-
-    for (var topicId in selectedTopics) {
-      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
-      if (topic.isNotEmpty && topic['variables'] != null) {
-        neededVars.addAll((topic['variables'] as List<dynamic>).map((e) => e.toString()));
-      }
-    }
-
-    neededVars.removeWhere(standardVariableNames.contains);
-
-    for (var v in neededVars) {
-      if (!_dynamicControllers.containsKey(v)) {
-        final ctrl = TextEditingController();
-        ctrl.addListener(_onFieldChanged);
-        _dynamicControllers[v] = ctrl;
-      }
-    }
-
-    _dynamicControllers.keys.toList().forEach((key) {
-      if (!neededVars.contains(key)) {
-        _dynamicControllers[key]?.dispose();
-        _dynamicControllers.remove(key);
-      }
-    });
-
-    _saveDraft();
-  }
-
-  void _toggleTopic(int topicId) {
-    safeSetState(() {
-      if (selectedTopics.contains(topicId)) {
-        selectedTopics.remove(topicId);
-      } else {
-        selectedTopics.add(topicId);
-      }
-      _updateDynamicFields();
-    });
-  }
-
-  String get _currentHeaderTemplate {
-    final saved = _pecaHeaders[_selectedPeca];
-    return saved != null && saved.trim().isNotEmpty
-        ? saved
-        : defaultHeaderForArea(globalCurrentArea);
-  }
-
-  DocumentInput _buildDocumentInput() {
-    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
-    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
-    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
-
-    final topics = <DocumentTopic>[];
-    for (var topicId in selectedTopics) {
-      final topic = dynamicTopics.firstWhere((t) => t['id'] == topicId, orElse: () => {});
-      if (topic.isNotEmpty && topic['content'] != null) {
-        topics.add(DocumentTopic(title: topic['title'].toString(), content: topic['content']));
-      }
-    }
-
-    return DocumentInput(
-      headerTemplate: _currentHeaderTemplate,
-      topics: topics,
-      enderecamento: _enderecamentoController.text,
-      nomeCliente: _nomeController.text,
-      cpf: _cpfController.text,
-      reu: _reuController.text,
-      processo: _processoController.text,
-      customVariables: _dynamicControllers.map((key, controller) => MapEntry(key, controller.text)),
-    );
-  }
-
-  void _copyToClipboardAsHtml() {
-    if (selectedTopics.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de copiar.')));
-      return;
-    }
-
-    _runAfterReview('Copiar mesmo assim', _copyDocument);
-  }
-
-  // A ação roda dentro do clique, porque o navegador só libera a área de
-  // transferência durante um gesto do usuário.
-  void _runAfterReview(String proceedLabel, VoidCallback action) {
-    // A conferência do número CNJ é só informativa: qualquer número pode ser usado.
-    final issues = findPendingFields(_buildDocumentInput())
-        .map((field) => '$field: não preenchido')
-        .toList();
-
-    if (issues.isEmpty) {
-      action();
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
-        title: Text('Documento com pendências', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Confira antes de usar este documento:', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-            const SizedBox(height: 12.0),
-            ...issues.map((issue) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4.0),
-                  child: Text('• $issue', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText)),
-                )),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              action();
-            },
-            child: Text(proceedLabel, style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+      ),
+    );
+  }
+
+  Widget _buildTopicCard(TopicItem topic) {
+    final theme = FlutterFlowTheme.of(context);
+    final position = _vm.selectedTopicIds.indexOf(topic.id);
+    final isSelected = position >= 0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.secondaryBackground,
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: isSelected ? theme.primary : theme.alternate, width: isSelected ? 1.5 : 1.0),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            InkWell(
+              onTap: () => _vm.toggleTopic(topic.id),
+              child: _checkMark(selected: isSelected, position: isSelected ? position + 1 : null),
+            ),
+            const SizedBox(width: 16.0),
+            Expanded(
+              child: InkWell(
+                onTap: () => _vm.toggleTopic(topic.id),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      topic.title,
+                      style: theme.titleSmall.override(
+                        font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                        color: theme.primaryText,
+                      ),
+                    ),
+                    const SizedBox(height: 4.0),
+                    Text(
+                      topic.preview,
+                      style: theme.bodySmall.override(font: GoogleFonts.inter(), color: theme.secondaryText),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Editar tópico',
+              icon: const Icon(Icons.edit_outlined, size: 18.0),
+              color: theme.secondaryText,
+              onPressed: () => _showEditTopicDialog(topic),
+            ),
+            IconButton(
+              tooltip: 'Excluir tópico',
+              icon: const Icon(Icons.delete_outline_rounded, size: 18.0),
+              color: Colors.redAccent,
+              onPressed: () => _deleteTopic(topic),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputField({
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    TextInputType? keyboardType,
+    List<TextInputFormatter>? inputFormatters,
+  }) {
+    final theme = FlutterFlowTheme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.labelSmall.override(
+            font: GoogleFonts.inter(fontWeight: FontWeight.bold),
+            color: theme.secondaryText,
+            letterSpacing: 0.5,
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Voltar e preencher', style: TextStyle(color: Colors.white)),
+        ),
+        const SizedBox(height: 6.0),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType ?? TextInputType.text,
+          inputFormatters: inputFormatters,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: theme.labelMedium.override(font: GoogleFonts.inter(), color: theme.secondaryText),
+            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: theme.alternate, width: 1.0),
+              borderRadius: BorderRadius.circular(8.0),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: theme.primary, width: 1.5),
+              borderRadius: BorderRadius.circular(8.0),
+            ),
+            filled: true,
+            fillColor: theme.primaryBackground,
+            contentPadding: const EdgeInsetsDirectional.fromSTEB(16.0, 12.0, 16.0, 12.0),
+          ),
+          style: theme.bodyMedium.override(font: GoogleFonts.inter(), color: theme.primaryText),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProcessoStatus() {
+    final theme = FlutterFlowTheme.of(context);
+    final check = checkCnjNumber(_processoController.text);
+    final (String message, Color color) = switch (check.status) {
+      CnjStatus.empty => ('', Colors.transparent),
+      CnjStatus.incomplete => ('Número incompleto', theme.secondaryText),
+      CnjStatus.invalid => ('Fora do padrão CNJ. Confira se houve erro de digitação.', _pendingColor),
+      CnjStatus.valid => (check.description ?? 'Número válido', theme.success),
+    };
+    if (message.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6.0),
+      child: Text(message, style: theme.labelSmall.override(font: GoogleFonts.inter(), color: color)),
+    );
+  }
+
+  Widget _buildQuickActions() => Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: _showAddPecaDialog,
+              child: wrapWithModel(
+                model: _model.quickActionCardModel1,
+                updateCallback: () => safeSetState(() {}),
+                child: QuickActionCardWidget(
+                  icon: Icon(Icons.note_add_rounded, color: FlutterFlowTheme.of(context).primary, size: 24.0),
+                  title: 'Nova Peça',
+                  subtitle: 'Criar documento',
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 16.0),
+          Expanded(
+            child: InkWell(
+              onTap: _openNewTopic,
+              child: wrapWithModel(
+                model: _model.quickActionCardModel2,
+                updateCallback: () => safeSetState(() {}),
+                child: QuickActionCardWidget(
+                  icon: Icon(Icons.add_box_rounded, color: FlutterFlowTheme.of(context).primary, size: 24.0),
+                  title: 'Novo Tópico',
+                  subtitle: 'Adicionar texto',
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+
+  Widget _buildPecasSection() => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _sectionTitle('Selecionar Peça'),
+          if (_vm.isLoading && _vm.pecas.isEmpty)
+            const Center(child: CircularProgressIndicator())
+          else
+            Wrap(
+              spacing: 12.0,
+              runSpacing: 12.0,
+              children: _vm.pecas.map(_buildPecaCard).toList(),
+            ),
+        ].divide(const SizedBox(height: 16.0)),
+      );
+
+  Widget _buildClientSection() {
+    final theme = FlutterFlowTheme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _sectionTitle('Dados do Cliente'),
+            TextButton.icon(
+              onPressed: _clearClientData,
+              icon: Icon(Icons.restart_alt_rounded, size: 18.0, color: theme.secondaryText),
+              label: Text('Limpar dados', style: TextStyle(color: theme.secondaryText)),
+            ),
+          ],
+        ),
+        Container(
+          decoration: BoxDecoration(
+            color: theme.secondaryBackground,
+            borderRadius: BorderRadius.circular(12.0),
+            border: Border.all(color: theme.alternate, width: 1.0),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildInputField(
+                  label: 'ENDEREÇAMENTO',
+                  hint: _enderecamentoHint,
+                  controller: _fieldControllers[ClientField.enderecamento]!,
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _buildInputField(
+                        label: 'NOME DO CLIENTE',
+                        hint: 'Ex: João Silva',
+                        controller: _fieldControllers[ClientField.nomeCliente]!,
+                      ),
+                    ),
+                    const SizedBox(width: 16.0),
+                    Expanded(
+                      child: _buildInputField(
+                        label: 'CPF',
+                        hint: '000.000.000-00',
+                        controller: _fieldControllers[ClientField.cpf]!,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly, CpfInputFormatter()],
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _buildInputField(
+                        label: 'RÉU / DESTINATÁRIO',
+                        hint: 'Nome da Empresa ou Nome Contrário',
+                        controller: _fieldControllers[ClientField.reu]!,
+                      ),
+                    ),
+                    const SizedBox(width: 16.0),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildInputField(
+                            label: 'NÚMERO DO PROCESSO',
+                            hint: '0000000-00.0000.0.00.0000',
+                            controller: _processoController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [FilteringTextInputFormatter.digitsOnly, ProcessoInputFormatter()],
+                          ),
+                          _buildProcessoStatus(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                ..._customControllers.entries.map((entry) => KeyedSubtree(
+                      key: ValueKey('variable-${entry.key}'),
+                      child: _buildInputField(
+                        label: variableLabel(entry.key).toUpperCase(),
+                        hint: 'Digite aqui',
+                        controller: entry.value,
+                      ),
+                    )),
+              ].divide(const SizedBox(height: 16.0)),
+            ),
+          ),
+        ),
+      ].divide(const SizedBox(height: 16.0)),
+    );
+  }
+
+  Widget _emptyMessage(String text) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24.0),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: FlutterFlowTheme.of(context).bodyMedium.override(
+                font: GoogleFonts.inter(),
+                color: FlutterFlowTheme.of(context).secondaryText,
+              ),
+        ),
+      );
+
+  Widget _buildKitChip(TopicKit kit) {
+    final theme = FlutterFlowTheme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.secondaryBackground,
+        borderRadius: BorderRadius.circular(9999.0),
+        border: Border.all(color: theme.primary),
+      ),
+      padding: const EdgeInsets.only(left: 14.0, right: 6.0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => _applyKit(kit),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Text(
+                '${kit.name} (${_vm.availableTopicsInKit(kit)})',
+                style: theme.labelMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.w600), color: theme.primaryText),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Excluir kit',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close_rounded, size: 16.0, color: theme.secondaryText),
+            onPressed: () => _deleteKit(kit),
           ),
         ],
       ),
     );
   }
 
-  void _copyDocument() {
-    final input = _buildDocumentInput();
-    final plainText = composePlainText(input);
+  Widget _buildKitsSection() {
+    if (_vm.selectedPeca == null || _vm.topicsOfSelectedPeca.isEmpty) return const SizedBox.shrink();
 
-    if (copyRichTextToClipboard(html: composeHtml(input), plainText: plainText)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Documento copiado. Cole no Word ou no Google Docs.')),
-      );
-    } else {
-      Clipboard.setData(ClipboardData(text: plainText));
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Copiado em formato simples (navegador bloqueou formatação).')),
-      );
-    }
+    final theme = FlutterFlowTheme.of(context);
+    final kits = _vm.kitsOfSelectedPeca;
+    final canSave = _vm.selectedTopicIds.isNotEmpty;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _sectionTitle('Kits de Tópicos'),
+            TextButton.icon(
+              onPressed: canSave ? _showSaveKitDialog : null,
+              icon: Icon(Icons.bookmark_add_outlined, size: 18.0, color: canSave ? theme.primary : theme.secondaryText),
+              label: Text('Salvar seleção', style: TextStyle(color: canSave ? theme.primary : theme.secondaryText)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8.0),
+        if (kits.isEmpty)
+          Text(
+            'Selecione os tópicos que costuma usar juntos e salve como kit para marcá-los com um clique.',
+            style: theme.bodySmall.override(font: GoogleFonts.inter(), color: theme.secondaryText),
+          )
+        else
+          Wrap(spacing: 8.0, runSpacing: 8.0, children: kits.map(_buildKitChip).toList()),
+      ],
+    );
   }
 
-  Widget _buildRichDocumentPreview() {
-    final baseStyle = FlutterFlowTheme.of(context).bodySmall.override(
-      font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText, lineHeight: 1.5,
-    );
-    final boldStyle = FlutterFlowTheme.of(context).bodySmall.override(
-      font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText, lineHeight: 1.5,
-    );
-    final pendingStyle = FlutterFlowTheme.of(context).bodySmall.override(
-      font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: _pendingColor, lineHeight: 1.5,
-    );
+  Widget _buildTopicsSection() {
+    final theme = FlutterFlowTheme.of(context);
+    final allTopics = _vm.topicsOfSelectedPeca;
+    final visibleTopics = _vm.visibleTopics;
+    final selectedCount = _vm.selectedTopicIds.length;
 
-    return RichText(
-      text: TextSpan(
-        children: composeSpans(_buildDocumentInput()).map((span) {
-          if (span.isPending) return TextSpan(text: span.text, style: pendingStyle);
-          return TextSpan(text: span.text, style: span.isTitle ? boldStyle : baseStyle);
-        }).toList(),
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _sectionTitle('Selecionar Tópicos'),
+            Container(
+              decoration: BoxDecoration(color: const Color(0x1A10B981), borderRadius: BorderRadius.circular(9999.0)),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Text(
+                selectedCount == 1 ? '1 selecionado' : '$selectedCount selecionados',
+                style: theme.labelSmall.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: theme.success),
+              ),
+            ),
+          ],
+        ),
+        if (allTopics.isNotEmpty)
+          TextField(
+            controller: _searchController,
+            decoration: _dialogFieldDecoration(hint: 'Buscar por título ou conteúdo').copyWith(
+              prefixIcon: Icon(Icons.search_rounded, color: theme.secondaryText, size: 20.0),
+              suffixIcon: _vm.searchQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Limpar busca',
+                      icon: Icon(Icons.close_rounded, color: theme.secondaryText, size: 18.0),
+                      onPressed: _searchController.clear,
+                    ),
+            ),
+            style: _dialogFieldStyle,
+          ),
+        if (_vm.isLoading)
+          const SizedBox.shrink()
+        else if (_vm.selectedPeca == null)
+          _emptyMessage('Nenhuma peça criada nesta área.\nClique em "Nova Peça" para começar.')
+        else if (allTopics.isEmpty)
+          _emptyMessage('Nenhum tópico criado para a peça "${_vm.selectedPeca}".\nClique em "Novo Tópico" para começar.')
+        else if (visibleTopics.isEmpty)
+          _emptyMessage('Nenhum tópico encontrado para "${_vm.searchQuery}".')
+        else
+          ...visibleTopics.map((topic) => Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: _buildTopicCard(topic),
+              )),
+      ].divide(const SizedBox(height: 16.0)),
+    );
+  }
+
+  Widget _buildOrderSection() {
+    final theme = FlutterFlowTheme.of(context);
+    final selected = _vm.selectedTopics;
+    if (selected.length < 2) return const SizedBox.shrink();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle('Ordem no Documento'),
+        const SizedBox(height: 12.0),
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: selected.length,
+          onReorder: _vm.moveSelectedTopic,
+          itemBuilder: (context, index) {
+            final topic = selected[index];
+            return Container(
+              key: ValueKey('order-${topic.id}'),
+              margin: const EdgeInsets.only(bottom: 8.0),
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+              decoration: BoxDecoration(
+                color: theme.secondaryBackground,
+                borderRadius: BorderRadius.circular(8.0),
+                border: Border.all(color: theme.alternate),
+              ),
+              child: Row(
+                children: [
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: Icon(Icons.drag_indicator_rounded, color: theme.secondaryText, size: 20.0),
+                  ),
+                  const SizedBox(width: 8.0),
+                  Text(
+                    '${index + 1}.',
+                    style: theme.labelMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: theme.primary),
+                  ),
+                  const SizedBox(width: 8.0),
+                  Expanded(
+                    child: Text(
+                      topic.title,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.bodyMedium.override(font: GoogleFonts.inter(), color: theme.primaryText),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Mover para cima',
+                    icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 20.0),
+                    color: theme.secondaryText,
+                    onPressed: index == 0 ? null : () => _vm.moveSelectedTopic(index, index - 1),
+                  ),
+                  IconButton(
+                    tooltip: 'Mover para baixo',
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20.0),
+                    color: theme.secondaryText,
+                    onPressed: index == selected.length - 1 ? null : () => _vm.moveSelectedTopic(index, index + 2),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
   Widget _buildPendingBanner() {
-    if (selectedTopics.isEmpty) return const SizedBox.shrink();
+    if (_vm.selectedTopics.isEmpty) return const SizedBox.shrink();
 
-    final pending = findPendingFields(_buildDocumentInput());
+    final pending = _vm.pendingFields;
     if (pending.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -924,185 +1163,158 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     );
   }
 
-  Widget _buildProcessoStatus() {
-    final check = checkCnjNumber(_processoController.text);
-    final (String message, Color color) = switch (check.status) {
-      CnjStatus.empty => ('', Colors.transparent),
-      CnjStatus.incomplete => ('Número incompleto', FlutterFlowTheme.of(context).secondaryText),
-      CnjStatus.invalid => ('Fora do padrão CNJ. Confira se houve erro de digitação.', _pendingColor),
-      CnjStatus.valid => (check.description ?? 'Número válido', FlutterFlowTheme.of(context).success),
-    };
-    if (message.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 6.0),
-      child: Text(
-        message,
-        style: FlutterFlowTheme.of(context).labelSmall.override(font: GoogleFonts.inter(), color: color),
-      ),
+  /// Folha branca parecida com o documento final. Carlito tem as mesmas medidas
+  /// da Calibri, que não está disponível para o navegador desenhar a prévia.
+  Widget _buildDocumentSheet() {
+    final baseStyle = GoogleFonts.carlito(fontSize: 14.67, height: 1.15, color: Colors.black);
+    final titleStyle = baseStyle.copyWith(fontWeight: FontWeight.bold);
+    final pendingStyle = baseStyle.copyWith(
+      fontWeight: FontWeight.bold,
+      color: const Color(0xFF92400E),
+      backgroundColor: const Color(0xFFFEF3C7),
     );
-  }
-
-  void _downloadAsDoc() {
-    if (selectedTopics.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de gerar o documento.')));
-      return;
-    }
-    _runAfterReview('Gerar mesmo assim', _generateFile);
-  }
-
-  void _generateFile() {
-    final downloaded = downloadWordDocument(
-      fileName: '${_selectedPeca?.replaceAll(' ', '_')}.doc',
-      content: composeWordDocument(_buildDocumentInput()),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(
-      downloaded
-          ? const SnackBar(content: Text('Arquivo gerado. Confira a pasta de downloads.'))
-          : const SnackBar(content: Text('Não foi possível gerar o arquivo. Tente copiar o documento.'), backgroundColor: Colors.red),
-    );
-  }
-
-  Widget _buildPecaCard(String name) {
-    final isSelected = _selectedPeca == name;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      decoration: BoxDecoration(
-        color: FlutterFlowTheme.of(context).primaryBackground,
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(
-          color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-          width: isSelected ? 1.5 : 1.0,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            InkWell(
-              onTap: () => _changePeca(name),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 20.0, height: 20.0,
-                    decoration: BoxDecoration(
-                      color: isSelected ? FlutterFlowTheme.of(context).primary : Colors.transparent,
-                      borderRadius: BorderRadius.circular(4.0),
-                      border: Border.all(
-                        color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-                        width: 1.5,
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: isSelected ? const Icon(Icons.check_rounded, color: Colors.white, size: 14.0) : null,
-                  ),
-                  const SizedBox(width: 8.0),
-                  Text(
-                    name,
-                    style: FlutterFlowTheme.of(context).labelMedium.override(
-                          font: GoogleFonts.inter(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500),
-                          color: isSelected ? FlutterFlowTheme.of(context).primaryText : FlutterFlowTheme.of(context).secondaryText,
-                        ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8.0),
-            InkWell(
-              onTap: () => _showEditPecaDialog(name),
-              child: Icon(Icons.edit_outlined, size: 16.0, color: FlutterFlowTheme.of(context).secondaryText),
-            ),
-            const SizedBox(width: 6.0),
-            InkWell(
-              onTap: () => _deletePeca(name),
-              child: const Icon(Icons.delete_outline_rounded, size: 16.0, color: Colors.redAccent),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopicCard(Map<String, dynamic> topic) {
-    final id = topic['id'] as int;
-    final title = topic['title'] as String;
-    final preview = topic['preview'] as String;
-    final isSelected = selectedTopics.contains(id);
 
     return Container(
-      decoration: BoxDecoration(
-        color: FlutterFlowTheme.of(context).secondaryBackground,
-        borderRadius: BorderRadius.circular(12.0),
-        border: Border.all(
-          color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-          width: isSelected ? 1.5 : 1.0,
+      width: double.infinity,
+      padding: const EdgeInsets.all(32.0),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4.0)),
+      child: RichText(
+        text: TextSpan(
+          children: composeSpans(_vm.documentInput).map((span) {
+            final style = span.isPending ? pendingStyle : (span.isTitle ? titleStyle : baseStyle);
+            return TextSpan(text: span.text, style: style);
+          }).toList(),
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          mainAxisSize: MainAxisSize.max,
-          crossAxisAlignment: CrossAxisAlignment.center,
+    );
+  }
+
+  Widget _buildPreviewSection() {
+    final theme = FlutterFlowTheme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
           children: [
+            Expanded(child: _sectionTitle('Visualização do Documento')),
             InkWell(
-              onTap: () => _toggleTopic(id),
+              onTap: _copyToClipboardAsHtml,
               child: Container(
-                width: 22.0, height: 22.0,
                 decoration: BoxDecoration(
-                  color: isSelected ? FlutterFlowTheme.of(context).primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6.0),
-                  border: Border.all(
-                    color: isSelected ? FlutterFlowTheme.of(context).primary : FlutterFlowTheme.of(context).alternate,
-                    width: 1.5,
-                  ),
+                  color: theme.primaryBackground,
+                  borderRadius: BorderRadius.circular(8.0),
+                  border: Border.all(color: theme.alternate),
                 ),
-                alignment: Alignment.center,
-                child: isSelected ? const Icon(Icons.check_rounded, color: Colors.white, size: 14.0) : null,
-              ),
-            ),
-            const SizedBox(width: 16.0),
-            Expanded(
-              child: InkWell(
-                onTap: () => _toggleTopic(id),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                child: Row(
                   children: [
+                    Icon(Icons.content_copy_rounded, color: theme.primaryText, size: 16.0),
+                    const SizedBox(width: 6.0),
                     Text(
-                      title,
-                      style: FlutterFlowTheme.of(context).titleSmall.override(
-                            font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                            color: FlutterFlowTheme.of(context).primaryText,
-                          ),
-                    ),
-                    const SizedBox(height: 4.0),
-                    Text(
-                      preview,
-                      style: FlutterFlowTheme.of(context).bodySmall.override(
-                            font: GoogleFonts.inter(),
-                            color: FlutterFlowTheme.of(context).secondaryText,
-                          ),
+                      'Copiar',
+                      style: theme.bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.w600), color: theme.primaryText),
                     ),
                   ],
                 ),
               ),
             ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 18.0),
-                  color: FlutterFlowTheme.of(context).secondaryText,
-                  onPressed: () => _showEditTopicDialog(topic),
+          ],
+        ),
+        const SizedBox(height: 4.0),
+        Text(
+          _vm.selectedPeca ?? '',
+          style: theme.labelMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: theme.primary),
+        ),
+        const SizedBox(height: 16.0),
+        _buildPendingBanner(),
+        _buildDocumentSheet(),
+      ],
+    );
+  }
+
+  Widget _buildFormColumn() => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildQuickActions(),
+          _buildPecasSection(),
+          _buildClientSection(),
+          _buildKitsSection(),
+          _buildTopicsSection(),
+          _buildOrderSection(),
+        ].divide(const SizedBox(height: 24.0)),
+      );
+
+  Widget _buildBody() => LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < _twoColumnWidth) {
+            return SingleChildScrollView(
+              primary: false,
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [_buildFormColumn(), const SizedBox(height: 24.0), _buildPreviewSection()],
+              ),
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  primary: false,
+                  padding: const EdgeInsets.all(24.0),
+                  child: _buildFormColumn(),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline_rounded, size: 18.0),
-                  color: Colors.redAccent,
-                  onPressed: () => _deleteTopic(id, title),
+              ),
+              Container(width: 1.0, color: FlutterFlowTheme.of(context).alternate),
+              Expanded(
+                child: SingleChildScrollView(
+                  primary: false,
+                  padding: const EdgeInsets.all(24.0),
+                  child: _buildPreviewSection(),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+  Widget _buildFooter() {
+    final theme = FlutterFlowTheme.of(context);
+    return SafeArea(
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.secondaryBackground,
+          border: Border(top: BorderSide(color: theme.alternate)),
+        ),
+        padding: const EdgeInsets.all(24.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Arquivo Word', style: theme.bodyMedium.override(font: GoogleFonts.inter(), color: theme.secondaryText)),
+            Row(
+              children: [
+                Icon(Icons.description_rounded, color: theme.primary, size: 20.0),
+                const SizedBox(width: 4.0),
+                Text('.doc', style: theme.bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: theme.primaryText)),
+                const SizedBox(width: 24.0),
+                InkWell(
+                  onTap: _downloadAsDoc,
+                  child: Container(
+                    decoration: BoxDecoration(color: theme.primary, borderRadius: BorderRadius.circular(8.0)),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.download_rounded, color: Colors.white, size: 20.0),
+                        const SizedBox(width: 8.0),
+                        Text('Gerar Arquivo', style: theme.titleSmall.override(font: GoogleFonts.inter(fontWeight: FontWeight.w600), color: Colors.white)),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1112,73 +1324,13 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     );
   }
 
-  Widget _buildInputField({
-    required String label,
-    required String hint,
-    required TextEditingController controller,
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-  }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: FlutterFlowTheme.of(context).labelSmall.override(
-                font: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                color: FlutterFlowTheme.of(context).secondaryText,
-                letterSpacing: 0.5,
-              ),
-        ),
-        const SizedBox(height: 6.0),
-        TextFormField(
-          controller: controller,
-          obscureText: false,
-          keyboardType: keyboardType ?? TextInputType.text,
-          inputFormatters: inputFormatters,
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: FlutterFlowTheme.of(context).labelMedium.override(
-                  font: GoogleFonts.inter(),
-                  color: FlutterFlowTheme.of(context).secondaryText,
-                ),
-            enabledBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: FlutterFlowTheme.of(context).primary, width: 1.5),
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: FlutterFlowTheme.of(context).error, width: 1.0),
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderSide: BorderSide(color: FlutterFlowTheme.of(context).error, width: 1.5),
-              borderRadius: BorderRadius.circular(8.0),
-            ),
-            filled: true,
-            fillColor: FlutterFlowTheme.of(context).primaryBackground,
-            contentPadding: const EdgeInsetsDirectional.fromSTEB(16.0, 12.0, 16.0, 12.0),
-          ),
-          style: FlutterFlowTheme.of(context).bodyMedium.override(
-                font: GoogleFonts.inter(),
-                color: FlutterFlowTheme.of(context).primaryText,
-              ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentArea = globalAreaDatabase[globalCurrentArea] ?? globalAreaDatabase['Trabalhista'];
-    final areaPecas = (currentArea['pecas'] as List).cast<String>();
-    
-    final allTopics = currentArea['topics'] as List<Map<String, dynamic>>;
-    final dynamicTopics = allTopics.where((t) => t['peca'] == _selectedPeca).toList();
+    final theme = FlutterFlowTheme.of(context);
+
+    if (_viewModel == null) {
+      return Scaffold(key: scaffoldKey, backgroundColor: theme.primaryBackground);
+    }
 
     return GestureDetector(
       onTap: () {
@@ -1187,41 +1339,32 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       },
       child: Scaffold(
         key: scaffoldKey,
-        backgroundColor: FlutterFlowTheme.of(context).primaryBackground,
+        backgroundColor: theme.primaryBackground,
         appBar: AppBar(
-          backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+          backgroundColor: theme.secondaryBackground,
           automaticallyImplyLeading: false,
           leading: FlutterFlowIconButton(
             borderColor: Colors.transparent,
             borderRadius: 30.0,
             borderWidth: 1.0,
             buttonSize: 60.0,
-            icon: Icon(
-              Icons.arrow_back_rounded,
-              color: FlutterFlowTheme.of(context).primaryText,
-              size: 24.0,
-            ),
-            onPressed: () async {
-              context.goNamed(MainMenuWidget.routeName);
-            },
+            icon: Icon(Icons.arrow_back_rounded, color: theme.primaryText, size: 24.0),
+            onPressed: () async => context.goNamed(MainMenuWidget.routeName),
           ),
           title: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                currentArea['title'],
-                style: FlutterFlowTheme.of(context).titleMedium.override(
-                      font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                      color: FlutterFlowTheme.of(context).primaryText,
-                    ),
+                globalAreaDatabase[_vm.area]['title'],
+                style: theme.titleMedium.override(
+                  font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                  color: theme.primaryText,
+                ),
               ),
               Text(
                 'Montador de Peças',
-                style: FlutterFlowTheme.of(context).labelSmall.override(
-                      font: GoogleFonts.inter(),
-                      color: FlutterFlowTheme.of(context).secondaryText,
-                    ),
+                style: theme.labelSmall.override(font: GoogleFonts.inter(), color: theme.secondaryText),
               ),
             ],
           ),
@@ -1229,381 +1372,14 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
           elevation: 0.0,
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(1.0),
-            child: Container(
-              color: FlutterFlowTheme.of(context).alternate,
-              height: 1.0,
-            ),
+            child: Container(color: theme.alternate, height: 1.0),
           ),
         ),
         body: Column(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              flex: 1,
-              child: Container(
-                child: SingleChildScrollView(
-                  primary: false,
-                  child: Padding(
-                    padding: const EdgeInsets.all(24.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.max,
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              flex: 1,
-                              child: InkWell(
-                                onTap: _showAddPecaDialog,
-                                child: wrapWithModel(
-                                  model: _model.quickActionCardModel1, 
-                                  updateCallback: () => safeSetState(() {}),
-                                  child: QuickActionCardWidget(
-                                    icon: Icon(Icons.note_add_rounded, color: FlutterFlowTheme.of(context).primary, size: 24.0),
-                                    title: 'Nova Peça',
-                                    subtitle: 'Criar documento',
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16.0),
-                            Expanded(
-                              flex: 1,
-                              child: InkWell(
-                                onTap: () async {
-                                  await context.pushNamed(AddTopicModalWidget.routeName);
-                                  await _loadDataFromSupabase();
-                                },
-                                child: wrapWithModel(
-                                  model: _model.quickActionCardModel2, 
-                                  updateCallback: () => safeSetState(() {}),
-                                  child: QuickActionCardWidget(
-                                    icon: Icon(Icons.add_box_rounded, color: FlutterFlowTheme.of(context).primary, size: 24.0),
-                                    title: 'Novo Tópico',
-                                    subtitle: 'Adicionar texto',
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              'Selecionar Peça',
-                              style: FlutterFlowTheme.of(context).titleMedium.override(
-                                    font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                    color: FlutterFlowTheme.of(context).primaryText,
-                                  ),
-                            ),
-                            if (_isLoadingData)
-                              const Center(child: CircularProgressIndicator())
-                            else
-                              Wrap(
-                                spacing: 12.0, runSpacing: 12.0,
-                                children: areaPecas.map((peca) => _buildPecaCard(peca)).toList(),
-                              ),
-                          ].divide(const SizedBox(height: 16.0)),
-                        ),
-
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Dados do Cliente',
-                                  style: FlutterFlowTheme.of(context).titleMedium.override(
-                                        font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                        color: FlutterFlowTheme.of(context).primaryText,
-                                      ),
-                                ),
-                                TextButton.icon(
-                                  onPressed: _clearClientData,
-                                  icon: Icon(Icons.restart_alt_rounded, size: 18.0, color: FlutterFlowTheme.of(context).secondaryText),
-                                  label: Text('Limpar dados', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
-                                ),
-                              ],
-                            ),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: FlutterFlowTheme.of(context).secondaryBackground,
-                                borderRadius: BorderRadius.circular(12.0),
-                                border: Border.all(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildInputField(
-                                            label: 'ENDEREÇAMENTO', hint: _enderecamentoHint, controller: _enderecamentoController,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildInputField(
-                                            label: 'NOME DO CLIENTE', hint: 'Ex: João Silva', controller: _nomeController,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16.0),
-                                        Expanded(
-                                          child: _buildInputField(
-                                            label: 'CPF', hint: '000.000.000-00', controller: _cpfController,
-                                            keyboardType: TextInputType.number,
-                                            inputFormatters: [FilteringTextInputFormatter.digitsOnly, CpfInputFormatter()],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildInputField(
-                                            label: 'RÉU / DESTINATÁRIO', hint: 'Nome da Empresa ou Nome Contrário', controller: _reuController,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16.0),
-                                        Expanded(
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              _buildInputField(
-                                                label: 'NÚMERO DO PROCESSO', hint: '0000000-00.0000.0.00.0000', controller: _processoController,
-                                                keyboardType: TextInputType.number,
-                                                inputFormatters: [FilteringTextInputFormatter.digitsOnly, ProcessoInputFormatter()],
-                                              ),
-                                              _buildProcessoStatus(),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    if (_dynamicControllers.isNotEmpty)
-                                      ..._dynamicControllers.entries.map((entry) {
-                                        return Row(
-                                          children: [
-                                            Expanded(
-                                              child: _buildInputField(
-                                                label: variableLabel(entry.key).toUpperCase(), hint: 'Digite aqui', controller: entry.value,
-                                              ),
-                                            ),
-                                          ]
-                                        );
-                                      }).toList(),
-                                  ].divide(const SizedBox(height: 16.0)),
-                                ),
-                              ),
-                            ),
-                          ].divide(const SizedBox(height: 16.0)),
-                        ),
-
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Selecionar Tópicos',
-                                  style: FlutterFlowTheme.of(context).titleMedium.override(
-                                        font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                        color: FlutterFlowTheme.of(context).primaryText,
-                                      ),
-                                ),
-                                Container(
-                                  decoration: BoxDecoration(color: const Color(0x1A10B981), borderRadius: BorderRadius.circular(9999.0)),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.check_rounded, color: FlutterFlowTheme.of(context).success, size: 14.0),
-                                        const SizedBox(width: 4.0),
-                                        Text(
-                                          '${selectedTopics.length} selecionados',
-                                          style: FlutterFlowTheme.of(context).labelSmall.override(
-                                                font: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                                                color: FlutterFlowTheme.of(context).success,
-                                              ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (_isLoadingData)
-                                  const SizedBox.shrink()
-                                else if (dynamicTopics.isEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 24.0),
-                                    child: Text(
-                                      _selectedPeca == null
-                                          ? 'Nenhuma peça criada nesta área.\nClique em "Nova Peça" para começar.'
-                                          : 'Nenhum tópico criado para a peça "$_selectedPeca".\nClique em "Novo Tópico" para começar.',
-                                      textAlign: TextAlign.center,
-                                      style: FlutterFlowTheme.of(context).bodyMedium.override(
-                                            font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText,
-                                          ),
-                                    ),
-                                  )
-                                else
-                                  ...dynamicTopics.map((topic) {
-                                    return Padding(
-                                      padding: const EdgeInsets.only(bottom: 8.0),
-                                      child: _buildTopicCard(topic),
-                                    );
-                                  }).toList(),
-                              ],
-                            ),
-                          ].divide(const SizedBox(height: 16.0)),
-                        ),
-
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Text(
-                              'Visualização do Documento',
-                              style: FlutterFlowTheme.of(context).titleMedium.override(
-                                    font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                    color: FlutterFlowTheme.of(context).primaryText,
-                                  ),
-                            ),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12.0),
-                              child: Container(
-                                constraints: const BoxConstraints(minHeight: 180.0),
-                                decoration: BoxDecoration(
-                                  color: FlutterFlowTheme.of(context).secondaryBackground,
-                                  border: Border.all(color: FlutterFlowTheme.of(context).alternate, width: 1.0),
-                                  borderRadius: BorderRadius.circular(12.0),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(24.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              _selectedPeca ?? '', 
-                                              style: FlutterFlowTheme.of(context).labelLarge.override(
-                                                    font: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                                                    color: FlutterFlowTheme.of(context).primary,
-                                                  ),
-                                            ),
-                                          ),
-                                          InkWell(
-                                            onTap: () => _copyToClipboardAsHtml(),
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                color: FlutterFlowTheme.of(context).primaryBackground,
-                                                borderRadius: BorderRadius.circular(8.0),
-                                                border: Border.all(color: FlutterFlowTheme.of(context).alternate),
-                                              ),
-                                              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-                                              child: Row(
-                                                children: [
-                                                  Icon(Icons.content_copy_rounded, color: FlutterFlowTheme.of(context).primaryText, size: 16.0),
-                                                  const SizedBox(width: 6.0),
-                                                  Text(
-                                                    'Copiar',
-                                                    style: FlutterFlowTheme.of(context).bodyMedium.override(
-                                                          font: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                                                          color: FlutterFlowTheme.of(context).primaryText,
-                                                        ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      Divider(height: 16.0, thickness: 1.0, color: FlutterFlowTheme.of(context).alternate),
-                                      const SizedBox(height: 8.0),
-                                      _buildPendingBanner(),
-                                      _buildRichDocumentPreview(),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ].divide(const SizedBox(height: 16.0)),
-                        ),
-                      ].divide(const SizedBox(height: 24.0)),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            SafeArea(
-              child: Container(
-                decoration: BoxDecoration(color: FlutterFlowTheme.of(context).secondaryBackground),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(height: 1.0, color: FlutterFlowTheme.of(context).alternate),
-                    Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Arquivo Word', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText)),
-                          Row(
-                            children: [
-                              Icon(Icons.description_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),
-                              const SizedBox(width: 4.0),
-                              Text('.doc', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText)),
-                              const SizedBox(width: 24.0),
-                              InkWell(
-                                onTap: () => _downloadAsDoc(),
-                                child: Container(
-                                  decoration: BoxDecoration(color: FlutterFlowTheme.of(context).primary, borderRadius: BorderRadius.circular(8.0)),
-                                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.download_rounded, color: Colors.white, size: 20.0),
-                                      const SizedBox(width: 8.0),
-                                      Text('Gerar Arquivo', style: FlutterFlowTheme.of(context).titleSmall.override(font: GoogleFonts.inter(fontWeight: FontWeight.w600), color: Colors.white)),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(child: _buildBody()),
+            _buildFooter(),
           ],
         ),
       ),

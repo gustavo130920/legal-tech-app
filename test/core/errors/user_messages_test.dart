@@ -23,6 +23,13 @@ void main() {
     expect(message, contains('Não foi possível'));
   });
 
+  test('nome repetido tem mensagem própria', () {
+    expect(
+      friendlyError(const PostgrestException(message: 'duplicate key', code: '23505')),
+      'Já existe um item com este nome.',
+    );
+  });
+
   test('falta de permissão tem mensagem própria', () {
     expect(
       friendlyError(const PostgrestException(message: 'denied', code: '42501')),

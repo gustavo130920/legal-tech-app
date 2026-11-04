@@ -33,6 +33,7 @@ String friendlyError(Object error) {
   }
 
   if (error is PostgrestException) {
+    if (error.code == '23505') return 'Já existe um item com este nome.';
     return error.code == '42501'
         ? 'Sua conta não tem permissão para esta operação.'
         : 'Não foi possível concluir a operação. Tente novamente.';
