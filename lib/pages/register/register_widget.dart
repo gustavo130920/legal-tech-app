@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/core/auth/password_policy.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -166,11 +167,11 @@ class _RegisterWidgetState extends State<RegisterWidget> {
       }
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro no Supabase: ${error.message}'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(error)), backgroundColor: Colors.red),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
       );
     } finally {
       safeSetState(() => _isLoading = false);

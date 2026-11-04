@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/components/quick_action_card_widget.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -7,7 +8,10 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '/core/legal/cnj_number.dart';
 import '/features/drafting/domain/document_composer.dart';
+import '/features/drafting/domain/workspace_draft.dart';
+import '/platform/browser_session.dart';
 import '/platform/document_actions.dart';
 import 'area_workspace_model.dart';
 import '../add_topic_modal/add_topic_modal_widget.dart';
@@ -15,6 +19,8 @@ import '../main_menu/main_menu_widget.dart';
 export 'area_workspace_model.dart';
 
 import '../../app_state.dart';
+
+const Color _pendingColor = Color(0xFFF59E0B);
 
 class AreaWorkspaceWidget extends StatefulWidget {
   const AreaWorkspaceWidget({super.key, this.area});
@@ -48,6 +54,9 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
   String? _selectedPeca;
   bool _isLoadingData = false;
 
+  // O rascunho só é gravado depois de restaurado, para não ser sobrescrito.
+  bool _draftChecked = false;
+
   @override
   void initState() {
     super.initState();
@@ -59,11 +68,11 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     _reuController = TextEditingController();
     _processoController = TextEditingController();
 
-    _enderecamentoController.addListener(() => safeSetState(() {}));
-    _nomeController.addListener(() => safeSetState(() {}));
-    _cpfController.addListener(() => safeSetState(() {}));
-    _reuController.addListener(() => safeSetState(() {}));
-    _processoController.addListener(() => safeSetState(() {}));
+    _enderecamentoController.addListener(_onFieldChanged);
+    _nomeController.addListener(_onFieldChanged);
+    _cpfController.addListener(_onFieldChanged);
+    _reuController.addListener(_onFieldChanged);
+    _processoController.addListener(_onFieldChanged);
 
     final area = widget.area;
     if (area != null && globalAreaDatabase.containsKey(area)) {
@@ -99,6 +108,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
 
   @override
   void dispose() {
+    setLeaveGuard(false);
     _enderecamentoController.dispose();
     _nomeController.dispose();
     _cpfController.dispose();
@@ -186,15 +196,120 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao sincronizar nuvem: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Erro ao carregar seus dados. ${friendlyError(e)}'), backgroundColor: Colors.red),
         );
       }
     } finally {
       if (mounted) {
         safeSetState(() => _isLoadingData = false);
         _updateDynamicFields();
+        if (!_draftChecked) {
+          _restoreDraft();
+          _draftChecked = true;
+          _saveDraft();
+        }
       }
     }
+  }
+
+  void _onFieldChanged() {
+    safeSetState(() {});
+    _saveDraft();
+  }
+
+  void _saveDraft() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (!_draftChecked || user == null) return;
+
+    final key = workspaceDraftKey(user.id, globalCurrentArea);
+    final draft = WorkspaceDraft(
+      peca: _selectedPeca,
+      topicIds: selectedTopics.toList(),
+      enderecamento: _enderecamentoController.text,
+      nomeCliente: _nomeController.text,
+      cpf: _cpfController.text,
+      reu: _reuController.text,
+      processo: _processoController.text,
+      customVariables: _dynamicControllers.map((name, controller) => MapEntry(name, controller.text)),
+    );
+
+    if (draft.isEmpty) {
+      removeDraft(key);
+      setLeaveGuard(false);
+    } else {
+      writeDraft(key, draft.encode());
+      setLeaveGuard(true);
+    }
+  }
+
+  void _restoreDraft() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    final draft = WorkspaceDraft.decode(readDraft(workspaceDraftKey(user.id, globalCurrentArea)));
+    if (draft == null || draft.isEmpty) return;
+
+    final currentArea = globalAreaDatabase[globalCurrentArea];
+    final pecas = (currentArea['pecas'] as List).cast<String>();
+    if (pecas.contains(draft.peca)) {
+      _selectedPeca = draft.peca;
+      globalSelectedPeca = draft.peca;
+    }
+
+    final topicsOfPeca = (currentArea['topics'] as List<Map<String, dynamic>>)
+        .where((topic) => topic['peca'] == _selectedPeca)
+        .map((topic) => topic['id'] as int)
+        .toSet();
+
+    safeSetState(() {
+      selectedTopics
+        ..clear()
+        ..addAll(draft.topicIds.where(topicsOfPeca.contains));
+      _enderecamentoController.text = draft.enderecamento;
+      _nomeController.text = draft.nomeCliente;
+      _cpfController.text = draft.cpf;
+      _reuController.text = draft.reu;
+      _processoController.text = draft.processo;
+      _updateDynamicFields();
+      draft.customVariables.forEach((name, value) => _dynamicControllers[name]?.text = value);
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Recuperamos o que você estava preenchendo nesta sessão.')),
+    );
+  }
+
+  Future<void> _clearClientData() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: Text('Limpar dados', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
+        content: Text('Os dados do cliente e os tópicos selecionados serão removidos para iniciar uma nova peça. As peças e os tópicos salvos não são apagados.', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Limpar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    safeSetState(() {
+      _enderecamentoController.clear();
+      _nomeController.clear();
+      _cpfController.clear();
+      _reuController.clear();
+      _processoController.clear();
+      selectedTopics.clear();
+      _dynamicControllers.forEach((_, controller) => controller.dispose());
+      _dynamicControllers.clear();
+      _updateDynamicFields();
+    });
   }
 
   void _changePeca(String newPeca) {
@@ -285,7 +400,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça criada com sucesso!'), backgroundColor: Colors.green));
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao salvar peça: $e'), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao salvar peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
       }
     }
   }
@@ -426,7 +541,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça atualizada com sucesso!'), backgroundColor: Colors.green));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar peça: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
     }
   }
 
@@ -475,7 +590,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       _updateDynamicFields();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Peça excluída com sucesso!'), backgroundColor: Colors.green));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir peça: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir peça. ${friendlyError(e)}'), backgroundColor: Colors.red));
     }
   }
 
@@ -573,7 +688,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico atualizado com sucesso!'), backgroundColor: Colors.green));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar tópico: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao atualizar tópico. ${friendlyError(e)}'), backgroundColor: Colors.red));
     }
   }
 
@@ -609,7 +724,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
 
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tópico excluído com sucesso!'), backgroundColor: Colors.green));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir tópico: $e'), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao excluir tópico. ${friendlyError(e)}'), backgroundColor: Colors.red));
     }
   }
 
@@ -632,7 +747,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     for (var v in neededVars) {
       if (!_dynamicControllers.containsKey(v)) {
         final ctrl = TextEditingController();
-        ctrl.addListener(() => safeSetState(() {}));
+        ctrl.addListener(_onFieldChanged);
         _dynamicControllers[v] = ctrl;
       }
     }
@@ -643,6 +758,8 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         _dynamicControllers.remove(key);
       }
     });
+
+    _saveDraft();
   }
 
   void _toggleTopic(int topicId) {
@@ -694,12 +811,67 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       return;
     }
 
+    _runAfterReview('Copiar mesmo assim', _copyDocument);
+  }
+
+  // A ação roda dentro do clique, porque o navegador só libera a área de
+  // transferência durante um gesto do usuário.
+  void _runAfterReview(String proceedLabel, VoidCallback action) {
+    final pending = findPendingFields(_buildDocumentInput());
+    final processoStatus = checkCnjNumber(_processoController.text).status;
+    final issues = [
+      ...pending.map((field) => '$field: não preenchido'),
+      if (processoStatus == CnjStatus.incomplete) 'Número do processo: incompleto',
+      if (processoStatus == CnjStatus.invalid) 'Número do processo: dígito verificador não confere',
+    ];
+
+    if (issues.isEmpty) {
+      action();
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: FlutterFlowTheme.of(context).secondaryBackground,
+        title: Text('Documento com pendências', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Confira antes de usar este documento:', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+            const SizedBox(height: 12.0),
+            ...issues.map((issue) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4.0),
+                  child: Text('• $issue', style: TextStyle(color: FlutterFlowTheme.of(context).primaryText)),
+                )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              action();
+            },
+            child: Text(proceedLabel, style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: FlutterFlowTheme.of(context).primary),
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Voltar e preencher', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _copyDocument() {
     final input = _buildDocumentInput();
     final plainText = composePlainText(input);
 
     if (copyRichTextToClipboard(html: composeHtml(input), plainText: plainText)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Documento copiado com formatação perfeita! Cole no Word ou Docs.')),
+        const SnackBar(content: Text('Documento copiado. Cole no Word ou no Google Docs.')),
       );
     } else {
       Clipboard.setData(ClipboardData(text: plainText));
@@ -716,12 +888,60 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     final boldStyle = FlutterFlowTheme.of(context).bodySmall.override(
       font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText, lineHeight: 1.5,
     );
+    final pendingStyle = FlutterFlowTheme.of(context).bodySmall.override(
+      font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: _pendingColor, lineHeight: 1.5,
+    );
 
     return RichText(
       text: TextSpan(
-        children: composeSpans(_buildDocumentInput())
-            .map((span) => TextSpan(text: span.text, style: span.isTitle ? boldStyle : baseStyle))
-            .toList(),
+        children: composeSpans(_buildDocumentInput()).map((span) {
+          if (span.isPending) return TextSpan(text: span.text, style: pendingStyle);
+          return TextSpan(text: span.text, style: span.isTitle ? boldStyle : baseStyle);
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildPendingBanner() {
+    if (selectedTopics.isEmpty) return const SizedBox.shrink();
+
+    final pending = findPendingFields(_buildDocumentInput());
+    if (pending.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16.0),
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: _pendingColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8.0),
+        border: Border.all(color: _pendingColor.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        '${pending.length == 1 ? 'Falta 1 campo' : 'Faltam ${pending.length} campos'}: ${pending.join(', ')}',
+        style: FlutterFlowTheme.of(context).bodySmall.override(
+              font: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              color: _pendingColor,
+            ),
+      ),
+    );
+  }
+
+  Widget _buildProcessoStatus() {
+    final check = checkCnjNumber(_processoController.text);
+    final (String message, Color color) = switch (check.status) {
+      CnjStatus.empty => ('', Colors.transparent),
+      CnjStatus.incomplete => ('Número incompleto', FlutterFlowTheme.of(context).secondaryText),
+      CnjStatus.invalid => ('Dígito verificador não confere. Revise o número.', FlutterFlowTheme.of(context).error),
+      CnjStatus.valid => (check.description ?? 'Número válido', FlutterFlowTheme.of(context).success),
+    };
+    if (message.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6.0),
+      child: Text(
+        message,
+        style: FlutterFlowTheme.of(context).labelSmall.override(font: GoogleFonts.inter(), color: color),
       ),
     );
   }
@@ -731,15 +951,19 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selecione tópicos antes de gerar o documento.')));
       return;
     }
+    _runAfterReview('Gerar mesmo assim', _generateFile);
+  }
+
+  void _generateFile() {
     final downloaded = downloadWordDocument(
       fileName: '${_selectedPeca?.replaceAll(' ', '_')}.doc',
       content: composeWordDocument(_buildDocumentInput()),
     );
-    if (!downloaded) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Não foi possível gerar o arquivo. Tente copiar o documento.'), backgroundColor: Colors.red),
-      );
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      downloaded
+          ? const SnackBar(content: Text('Arquivo gerado. Confira a pasta de downloads.'))
+          : const SnackBar(content: Text('Não foi possível gerar o arquivo. Tente copiar o documento.'), backgroundColor: Colors.red),
+    );
   }
 
   Widget _buildPecaCard(String name) {
@@ -1098,12 +1322,22 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              'Dados do Cliente',
-                              style: FlutterFlowTheme.of(context).titleMedium.override(
-                                    font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                    color: FlutterFlowTheme.of(context).primaryText,
-                                  ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Dados do Cliente',
+                                  style: FlutterFlowTheme.of(context).titleMedium.override(
+                                        font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                        color: FlutterFlowTheme.of(context).primaryText,
+                                      ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: _clearClientData,
+                                  icon: Icon(Icons.restart_alt_rounded, size: 18.0, color: FlutterFlowTheme.of(context).secondaryText),
+                                  label: Text('Limpar dados', style: TextStyle(color: FlutterFlowTheme.of(context).secondaryText)),
+                                ),
+                              ],
                             ),
                             Container(
                               decoration: BoxDecoration(
@@ -1152,10 +1386,17 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                                         ),
                                         const SizedBox(width: 16.0),
                                         Expanded(
-                                          child: _buildInputField(
-                                            label: 'NÚMERO DO PROCESSO', hint: '0000000-00.0000.0.00.0000', controller: _processoController,
-                                            keyboardType: TextInputType.number,
-                                            inputFormatters: [FilteringTextInputFormatter.digitsOnly, ProcessoInputFormatter()],
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              _buildInputField(
+                                                label: 'NÚMERO DO PROCESSO', hint: '0000000-00.0000.0.00.0000', controller: _processoController,
+                                                keyboardType: TextInputType.number,
+                                                inputFormatters: [FilteringTextInputFormatter.digitsOnly, ProcessoInputFormatter()],
+                                              ),
+                                              _buildProcessoStatus(),
+                                            ],
                                           ),
                                         ),
                                       ],
@@ -1166,7 +1407,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                                           children: [
                                             Expanded(
                                               child: _buildInputField(
-                                                label: entry.key.toUpperCase(), hint: 'Insira o(a) ${entry.key}', controller: entry.value,
+                                                label: variableLabel(entry.key).toUpperCase(), hint: 'Digite aqui', controller: entry.value,
                                               ),
                                             ),
                                           ]
@@ -1309,6 +1550,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                                       ),
                                       Divider(height: 16.0, thickness: 1.0, color: FlutterFlowTheme.of(context).alternate),
                                       const SizedBox(height: 8.0),
+                                      _buildPendingBanner(),
                                       _buildRichDocumentPreview(),
                                     ],
                                   ),
@@ -1335,7 +1577,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Formato de Saída', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText)),
+                          Text('Arquivo Word', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText)),
                           Row(
                             children: [
                               Icon(Icons.description_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),

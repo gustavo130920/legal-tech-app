@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/features/drafting/domain/document_composer.dart';
 import '/components/button/button_widget.dart';
 import '/components/form_label/form_label_widget.dart';
@@ -102,7 +103,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao carregar as peças: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Erro ao carregar as peças. ${friendlyError(e)}'), backgroundColor: Colors.red),
         );
       }
     }
@@ -169,7 +170,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
       _closeModal();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro do banco: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
       );
     } finally {
       safeSetState(() => _isSaving = false);

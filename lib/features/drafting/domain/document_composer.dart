@@ -34,10 +34,13 @@ class DocumentInput {
 }
 
 class DocumentSpan {
-  const DocumentSpan(this.text, {this.isTitle = false});
+  const DocumentSpan(this.text, {this.isTitle = false, this.isPending = false});
 
   final String text;
   final bool isTitle;
+
+  /// Trecho que ainda depende de um campo não preenchido.
+  final bool isPending;
 }
 
 /// Variáveis com campo fixo na tela, incluindo os nomes alternativos aceitos.
@@ -83,32 +86,117 @@ List<String> extractVariables(String text) => _variablePattern
     .toSet()
     .toList();
 
-String _orPlaceholder(String value, String placeholder) =>
-    value.isNotEmpty ? value : placeholder;
+const Map<String, String> _standardPlaceholders = {
+  'NOME_CLIENTE': '[NOME DO CLIENTE]',
+  'nome_cliente': '[NOME DO CLIENTE]',
+  'CPF': '[CPF]',
+  'cpf': '[CPF]',
+  'REU': '[RÉU / DESTINATÁRIO]',
+  'reu_destinatario': '[RÉU / DESTINATÁRIO]',
+  'PROCESSO': '[NÚMERO DO PROCESSO]',
+  'numero_processo': '[NÚMERO DO PROCESSO]',
+  'ENDEREÇAMENTO': '[ENDEREÇAMENTO]',
+  'endereçamento': '[ENDEREÇAMENTO]',
+};
+
+const Map<String, String> _standardLabels = {
+  'NOME_CLIENTE': 'Nome do cliente',
+  'nome_cliente': 'Nome do cliente',
+  'CPF': 'CPF',
+  'cpf': 'CPF',
+  'REU': 'Réu / destinatário',
+  'reu_destinatario': 'Réu / destinatário',
+  'PROCESSO': 'Número do processo',
+  'numero_processo': 'Número do processo',
+  'ENDEREÇAMENTO': 'Endereçamento',
+  'endereçamento': 'Endereçamento',
+};
+
+/// Nome legível de uma variável: `DATA_CONTRATO` vira `Data contrato`.
+String variableLabel(String key) {
+  final standard = _standardLabels[key];
+  if (standard != null) return standard;
+  final words = key.replaceAll('_', ' ').trim().toLowerCase();
+  if (words.isEmpty) return key;
+  return words[0].toUpperCase() + words.substring(1);
+}
+
+String _standardValue(String key, DocumentInput input) {
+  switch (key) {
+    case 'NOME_CLIENTE':
+    case 'nome_cliente':
+      return input.nomeCliente;
+    case 'CPF':
+    case 'cpf':
+      return input.cpf;
+    case 'REU':
+    case 'reu_destinatario':
+      return input.reu;
+    case 'PROCESSO':
+    case 'numero_processo':
+      return input.processo;
+    default:
+      return input.enderecamento;
+  }
+}
+
+/// Valor preenchido para a variável, ou null quando ainda está pendente.
+String? _filledValue(String key, DocumentInput input) {
+  final value = _standardPlaceholders.containsKey(key)
+      ? _standardValue(key, input)
+      : input.customVariables[key];
+  return value != null && value.trim().isNotEmpty ? value : null;
+}
+
+/// Como uma variável pendente aparece no documento.
+String _pendingText(String key, String original) =>
+    _standardPlaceholders[key] ?? original;
 
 /// Substitui as variáveis em uma única passada: um valor digitado que contenha
 /// `{{OUTRA}}` é mantido como texto e não é substituído de novo.
-String applyVariables(String text, DocumentInput input) {
-  final values = <String, String>{
-    'NOME_CLIENTE': _orPlaceholder(input.nomeCliente, '[NOME DO CLIENTE]'),
-    'nome_cliente': _orPlaceholder(input.nomeCliente, '[NOME DO CLIENTE]'),
-    'CPF': _orPlaceholder(input.cpf, '[CPF]'),
-    'cpf': _orPlaceholder(input.cpf, '[CPF]'),
-    'REU': _orPlaceholder(input.reu, '[RÉU / DESTINATÁRIO]'),
-    'reu_destinatario': _orPlaceholder(input.reu, '[RÉU / DESTINATÁRIO]'),
-    'PROCESSO': _orPlaceholder(input.processo, '[NÚMERO DO PROCESSO]'),
-    'numero_processo': _orPlaceholder(input.processo, '[NÚMERO DO PROCESSO]'),
-    'ENDEREÇAMENTO': _orPlaceholder(input.enderecamento, '[ENDEREÇAMENTO]'),
-    'endereçamento': _orPlaceholder(input.enderecamento, '[ENDEREÇAMENTO]'),
-  };
+String applyVariables(String text, DocumentInput input) =>
+    text.replaceAllMapped(_variablePattern, (match) {
+      final key = match.group(1)!.trim();
+      return _filledValue(key, input) ?? _pendingText(key, match.group(0)!);
+    });
 
-  return text.replaceAllMapped(_variablePattern, (match) {
+/// Campos usados no documento que ainda não foram preenchidos, sem repetição
+/// e na ordem em que aparecem.
+List<String> findPendingFields(DocumentInput input) {
+  final texts = [input.headerTemplate, ...input.topics.map((topic) => topic.content)];
+  final pending = <String>{};
+  for (final text in texts) {
+    for (final key in extractVariables(text)) {
+      if (_filledValue(key, input) == null) pending.add(variableLabel(key));
+    }
+  }
+  return pending.toList();
+}
+
+/// Divide o texto em trechos, separando o que depende de campo pendente.
+List<DocumentSpan> _splitPending(String text, DocumentInput input) {
+  final spans = <DocumentSpan>[];
+  var position = 0;
+  var filled = StringBuffer();
+
+  for (final match in _variablePattern.allMatches(text)) {
+    filled.write(text.substring(position, match.start));
+    position = match.end;
+
     final key = match.group(1)!.trim();
-    final standard = values[key];
-    if (standard != null) return standard;
-    final custom = input.customVariables[key];
-    return custom != null && custom.isNotEmpty ? custom : match.group(0)!;
-  });
+    final value = _filledValue(key, input);
+    if (value != null) {
+      filled.write(value);
+    } else {
+      if (filled.isNotEmpty) spans.add(DocumentSpan(filled.toString()));
+      filled = StringBuffer();
+      spans.add(DocumentSpan(_pendingText(key, match.group(0)!), isPending: true));
+    }
+  }
+
+  filled.write(text.substring(position));
+  if (filled.isNotEmpty) spans.add(DocumentSpan(filled.toString()));
+  return spans;
 }
 
 String _composeHeader(DocumentInput input) =>
@@ -128,10 +216,14 @@ String composePlainText(DocumentInput input) {
 }
 
 List<DocumentSpan> composeSpans(DocumentInput input) {
-  final spans = <DocumentSpan>[DocumentSpan('${_composeHeader(input)}\n')];
+  final spans = <DocumentSpan>[
+    ..._splitPending(input.headerTemplate, input),
+    const DocumentSpan('\n'),
+  ];
   for (final topic in input.topics) {
     spans.add(DocumentSpan('\n${topic.title.toUpperCase()}\n', isTitle: true));
-    spans.add(DocumentSpan('${applyVariables(topic.content, input)}\n'));
+    spans.addAll(_splitPending(topic.content, input));
+    spans.add(const DocumentSpan('\n'));
   }
   return spans;
 }

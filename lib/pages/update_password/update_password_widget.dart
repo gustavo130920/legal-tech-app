@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/core/auth/password_policy.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
@@ -63,9 +64,9 @@ class _UpdatePasswordWidgetState extends State<UpdatePasswordWidget> {
       _showMessage('Senha alterada com sucesso!', Colors.green);
       context.goNamed(MainMenuWidget.routeName);
     } on AuthException catch (error) {
-      _showMessage('Erro ao alterar a senha: ${error.message}', Colors.red);
+      _showMessage('Erro ao alterar a senha. ${friendlyError(error)}', Colors.red);
     } catch (e) {
-      _showMessage('Erro inesperado: $e', Colors.red);
+      _showMessage(friendlyError(e), Colors.red);
     } finally {
       safeSetState(() => _isSaving = false);
     }

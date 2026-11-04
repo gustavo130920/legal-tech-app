@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/components/back_button/back_button_widget.dart';
 import '/components/button/button_widget.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -67,11 +68,11 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
       context.safePop();
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao solicitar: ${error.message}'), backgroundColor: Colors.red),
+        SnackBar(content: Text('Erro ao solicitar. ${friendlyError(error)}'), backgroundColor: Colors.red),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
       );
     } finally {
       safeSetState(() => _isLoading = false);
