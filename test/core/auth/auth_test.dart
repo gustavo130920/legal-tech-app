@@ -80,6 +80,43 @@ void main() {
       expectMemoryClean();
     });
 
+    test('nenhuma peça vem pronta na memória de uma conta nova', () {
+      clearSessionMemory();
+      globalAreaDatabase.forEach((area, value) {
+        expect(value['pecas'], isEmpty, reason: area);
+      });
+    });
+
+    test('entrar com outra conta sem evento de saída limpa a memória', () {
+      final notifier = AppStateNotifier.instance;
+      notifier.handleAuthEvent(AuthChangeEvent.signedOut);
+      notifier.handleAuthEvent(AuthChangeEvent.signedIn, userId: 'conta-a');
+      fillMemory();
+      notifier.handleAuthEvent(AuthChangeEvent.signedIn, userId: 'conta-b');
+      expectMemoryClean();
+    });
+
+    test('novo evento da mesma conta mantém os dados', () {
+      final notifier = AppStateNotifier.instance;
+      notifier.handleAuthEvent(AuthChangeEvent.signedOut);
+      notifier.handleAuthEvent(AuthChangeEvent.signedIn, userId: 'conta-a');
+      fillMemory();
+      notifier.handleAuthEvent(AuthChangeEvent.userUpdated, userId: 'conta-a');
+      notifier.handleAuthEvent(AuthChangeEvent.tokenRefreshed, userId: 'conta-a');
+      expect(globalCurrentArea, 'Penal');
+      notifier.handleAuthEvent(AuthChangeEvent.signedOut);
+    });
+
+    test('troca de conta detectada na renovação do token também limpa', () {
+      final notifier = AppStateNotifier.instance;
+      notifier.handleAuthEvent(AuthChangeEvent.signedOut);
+      notifier.handleAuthEvent(AuthChangeEvent.signedIn, userId: 'conta-a');
+      fillMemory();
+      notifier.handleAuthEvent(AuthChangeEvent.tokenRefreshed, userId: 'conta-b');
+      expectMemoryClean();
+      notifier.handleAuthEvent(AuthChangeEvent.signedOut);
+    });
+
     test('renovar o token não apaga os dados nem avisa as rotas', () {
       fillMemory();
       var notified = false;

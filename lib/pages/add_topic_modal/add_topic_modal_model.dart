@@ -22,8 +22,6 @@ class AddTopicModalModel extends FlutterFlowModel<AddTopicModalWidget> {
   late PlaceholderChipModel placeholderChipModel2;
   late PlaceholderChipModel placeholderChipModel3;
   late PlaceholderChipModel placeholderChipModel4;
-  late FormLabelModel formLabelModel4;
-  late TextFieldModel textFieldModel3;
   late ButtonModel buttonModel1;
   late ButtonModel buttonModel2;
 
@@ -38,8 +36,6 @@ class AddTopicModalModel extends FlutterFlowModel<AddTopicModalWidget> {
     placeholderChipModel2 = createModel(context, () => PlaceholderChipModel());
     placeholderChipModel3 = createModel(context, () => PlaceholderChipModel());
     placeholderChipModel4 = createModel(context, () => PlaceholderChipModel());
-    formLabelModel4 = createModel(context, () => FormLabelModel());
-    textFieldModel3 = createModel(context, () => TextFieldModel());
     buttonModel1 = createModel(context, () => ButtonModel());
     buttonModel2 = createModel(context, () => ButtonModel());
   }
@@ -55,8 +51,6 @@ class AddTopicModalModel extends FlutterFlowModel<AddTopicModalWidget> {
     placeholderChipModel2.dispose();
     placeholderChipModel3.dispose();
     placeholderChipModel4.dispose();
-    formLabelModel4.dispose();
-    textFieldModel3.dispose();
     buttonModel1.dispose();
     buttonModel2.dispose();
   }

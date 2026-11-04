@@ -27,6 +27,7 @@ class AppStateNotifier extends ChangeNotifier {
   bool showSplashImage = true;
 
   bool isPasswordRecovery = false;
+  String? _memoryOwnerId;
 
   void stopShowingSplashImage() {
     showSplashImage = false;
@@ -34,11 +35,16 @@ class AppStateNotifier extends ChangeNotifier {
   }
 
   /// Reage a toda mudança de sessão, inclusive saída em outra aba ou expiração.
-  void handleAuthEvent(AuthChangeEvent event) {
-    if (event == AuthChangeEvent.tokenRefreshed) return;
+  void handleAuthEvent(AuthChangeEvent event, {String? userId}) {
+    final accountChanged = userId != null && _memoryOwnerId != null && userId != _memoryOwnerId;
+    if (accountChanged) clearSessionMemory();
+    if (userId != null) _memoryOwnerId = userId;
+
+    if (event == AuthChangeEvent.tokenRefreshed && !accountChanged) return;
 
     if (event == AuthChangeEvent.signedOut) {
       clearSessionMemory();
+      _memoryOwnerId = null;
       isPasswordRecovery = false;
     } else if (event == AuthChangeEvent.passwordRecovery) {
       isPasswordRecovery = true;
@@ -102,7 +108,9 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
         FFRoute(
           name: AreaWorkspaceWidget.routeName,
           path: AreaWorkspaceWidget.routePath,
-          builder: (context, params) => AreaWorkspaceWidget(),
+          builder: (context, params) => AreaWorkspaceWidget(
+            area: params.getParam('area', ParamType.String),
+          ),
         )
       ].map((r) => r.toRoute(appStateNotifier)).toList(),
     );

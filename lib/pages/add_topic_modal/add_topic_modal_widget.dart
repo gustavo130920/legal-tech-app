@@ -31,7 +31,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
   late TextEditingController _titleController;
   late TextEditingController _contentController;
-  late TextEditingController _tagsController;
 
   String? _selectedArea;
   String? _selectedPeca;
@@ -47,7 +46,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
     _titleController = TextEditingController();
     _contentController = TextEditingController();
-    _tagsController = TextEditingController();
 
     final availableAreas = globalSavedAreas.isNotEmpty
         ? globalSavedAreas.toList()
@@ -65,15 +63,49 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     }
     
     _pecaController = FormFieldController<String>(_selectedPeca);
+
+    _loadPecasForArea(_selectedArea!);
   }
 
   @override
   void dispose() {
     _titleController.dispose();
     _contentController.dispose();
-    _tagsController.dispose();
     _model.dispose();
     super.dispose();
+  }
+
+  // A lista vem sempre do banco: só aparecem peças salvas nesta conta.
+  Future<void> _loadPecasForArea(String area) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final response = await Supabase.instance.client
+          .from('pecas')
+          .select('peca_name')
+          .eq('user_id', user.id)
+          .eq('area_name', area)
+          .order('id', ascending: true);
+
+      if (!mounted || _selectedArea != area || Supabase.instance.client.auth.currentUser?.id != user.id) return;
+
+      final pecas = (response as List).map((item) => item['peca_name'].toString()).toList();
+
+      safeSetState(() {
+        globalAreaDatabase[area]['pecas'] = pecas;
+        if (!pecas.contains(_selectedPeca)) {
+          _selectedPeca = pecas.isNotEmpty ? pecas.first : null;
+          _pecaController?.value = _selectedPeca;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao carregar as peças: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _closeModal() {
@@ -132,7 +164,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
       safeSetState(() {
         _titleController.clear();
         _contentController.clear();
-        _tagsController.clear();
       });
 
       _closeModal();
@@ -285,6 +316,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                                       _selectedPeca = newPecasForArea.isNotEmpty ? newPecasForArea.first : null;
                                       _pecaController?.value = _selectedPeca;
                                     });
+                                    _loadPecasForArea(val);
                                   }
                                 },
                                 width: double.infinity, height: 40.0,
@@ -411,23 +443,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                               ],
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        wrapWithModel(
-                          model: _model.formLabelModel4, updateCallback: () => safeSetState(() {}),
-                          child: const FormLabelWidget(label: 'Tags de Organização'),
-                        ),
-                        _buildTextInput(
-                          hint: 'Adicione tags separadas por vírgula',
-                          controller: _tagsController,
-                          leadingIcon: Icons.label_rounded,
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) => _saveTopicToSupabase(),
                         ),
                       ],
                     ),

@@ -67,7 +67,10 @@ class _MyAppState extends State<MyApp> {
     _appStateNotifier = AppStateNotifier.instance;
     _router = createRouter(_appStateNotifier);
     _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen(
-      (authState) => _appStateNotifier.handleAuthEvent(authState.event),
+      (authState) => _appStateNotifier.handleAuthEvent(
+        authState.event,
+        userId: authState.session?.user.id,
+      ),
       onError: (Object error) => debugPrint('Falha na sessão: $error'),
     );
   }

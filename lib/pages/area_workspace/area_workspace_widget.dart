@@ -17,10 +17,13 @@ export 'area_workspace_model.dart';
 import '../../app_state.dart';
 
 class AreaWorkspaceWidget extends StatefulWidget {
-  const AreaWorkspaceWidget({super.key});
+  const AreaWorkspaceWidget({super.key, this.area});
 
   static String routeName = 'AreaWorkspace';
   static String routePath = '/areaWorkspace';
+
+  /// Vem da URL, para que recarregar a página mantenha a mesma área.
+  final String? area;
 
   @override
   State<AreaWorkspaceWidget> createState() => _AreaWorkspaceWidgetState();
@@ -62,7 +65,36 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     _reuController.addListener(() => safeSetState(() {}));
     _processoController.addListener(() => safeSetState(() {}));
 
-    _loadDataFromSupabase();
+    final area = widget.area;
+    if (area != null && globalAreaDatabase.containsKey(area)) {
+      globalCurrentArea = area;
+    }
+
+    if (globalAreaDatabase.containsKey(globalCurrentArea)) {
+      _loadDataFromSupabase();
+    } else {
+      // Sem área definida não há como saber o que abrir: nunca assumir uma.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.goNamed(MainMenuWidget.routeName);
+      });
+    }
+  }
+
+  String get _enderecamentoHint {
+    switch (globalCurrentArea) {
+      case 'Trabalhista':
+        return 'Ex: Vara do Trabalho de São Paulo/SP';
+      case 'Penal':
+        return 'Ex: Vara Criminal de São Paulo/SP';
+      case 'Previdenciário':
+        return 'Ex: Vara Previdenciária de São Paulo/SP';
+      case 'Tributário':
+        return 'Ex: Vara da Fazenda Pública de São Paulo/SP';
+      case 'Contratos':
+        return 'Ex: Comarca de São Paulo/SP';
+      default:
+        return 'Ex: Vara Cível de São Paulo/SP';
+    }
   }
 
   @override
@@ -81,6 +113,14 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
 
+    final area = globalCurrentArea;
+
+    // Resposta de uma sessão ou área anterior nunca pode entrar na memória atual.
+    bool isStale() =>
+        !mounted ||
+        globalCurrentArea != area ||
+        Supabase.instance.client.auth.currentUser?.id != user.id;
+
     safeSetState(() {
       _isLoadingData = true;
     });
@@ -90,8 +130,17 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
           .from('pecas')
           .select('peca_name, header_template')
           .eq('user_id', user.id)
-          .eq('area_name', globalCurrentArea)
+          .eq('area_name', area)
           .order('id', ascending: true);
+
+      final topicsResponse = await Supabase.instance.client
+          .from('topics')
+          .select()
+          .eq('user_id', user.id)
+          .eq('area_name', area)
+          .order('id', ascending: true);
+
+      if (isStale()) return;
 
       final List<String> loadedPecas = (pecasResponse as List)
           .map((item) => item['peca_name'].toString())
@@ -103,19 +152,12 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
             .where((item) => item['header_template'] != null)
             .map((item) => MapEntry(item['peca_name'].toString(), item['header_template'].toString())));
 
-      final currentAreaMap = globalAreaDatabase[globalCurrentArea];
+      final currentAreaMap = globalAreaDatabase[area];
       if (currentAreaMap != null) {
         currentAreaMap['pecas'] = <String>[];
         final List<String> currentPecas = (currentAreaMap['pecas'] as List).cast<String>();
         currentPecas.addAll(loadedPecas);
       }
-
-      final topicsResponse = await Supabase.instance.client
-          .from('topics')
-          .select()
-          .eq('user_id', user.id)
-          .eq('area_name', globalCurrentArea)
-          .order('id', ascending: true);
 
       final List<Map<String, dynamic>> loadedTopics = (topicsResponse as List).map((item) {
         return {
@@ -128,8 +170,8 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         };
       }).toList();
 
-      if (globalAreaDatabase[globalCurrentArea] != null) {
-        globalAreaDatabase[globalCurrentArea]['topics'] = loadedTopics;
+      if (globalAreaDatabase[area] != null) {
+        globalAreaDatabase[area]['topics'] = loadedTopics;
       }
 
       if (currentAreaMap != null && (currentAreaMap['pecas'] as List).isNotEmpty) {
@@ -142,12 +184,16 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
       
       globalSelectedPeca = _selectedPeca;
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao sincronizar nuvem: $e'), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao sincronizar nuvem: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
-      safeSetState(() => _isLoadingData = false);
-      _updateDynamicFields();
+      if (mounted) {
+        safeSetState(() => _isLoadingData = false);
+        _updateDynamicFields();
+      }
     }
   }
 
@@ -1075,7 +1121,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                                       children: [
                                         Expanded(
                                           child: _buildInputField(
-                                            label: 'ENDEREÇAMENTO', hint: 'Ex: Vara do Trabalho de São Paulo/SP', controller: _enderecamentoController,
+                                            label: 'ENDEREÇAMENTO', hint: _enderecamentoHint, controller: _enderecamentoController,
                                           ),
                                         ),
                                       ],
@@ -1171,11 +1217,15 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                if (dynamicTopics.isEmpty)
+                                if (_isLoadingData)
+                                  const SizedBox.shrink()
+                                else if (dynamicTopics.isEmpty)
                                   Padding(
                                     padding: const EdgeInsets.symmetric(vertical: 24.0),
                                     child: Text(
-                                      'Nenhum tópico criado para a peça "$_selectedPeca".\nClique em "Novo Tópico" para começar.',
+                                      _selectedPeca == null
+                                          ? 'Nenhuma peça criada nesta área.\nClique em "Nova Peça" para começar.'
+                                          : 'Nenhum tópico criado para a peça "$_selectedPeca".\nClique em "Novo Tópico" para começar.',
                                       textAlign: TextAlign.center,
                                       style: FlutterFlowTheme.of(context).bodyMedium.override(
                                             font: GoogleFonts.inter(), color: FlutterFlowTheme.of(context).secondaryText,
@@ -1290,7 +1340,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
                             children: [
                               Icon(Icons.description_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),
                               const SizedBox(width: 4.0),
-                              Text('.docx', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText)),
+                              Text('.doc', style: FlutterFlowTheme.of(context).bodyMedium.override(font: GoogleFonts.inter(fontWeight: FontWeight.bold), color: FlutterFlowTheme.of(context).primaryText)),
                               const SizedBox(width: 24.0),
                               InkWell(
                                 onTap: () => _downloadAsDoc(),

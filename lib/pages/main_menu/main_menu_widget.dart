@@ -79,6 +79,9 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
             .eq('user_id', user.id)
             .maybeSingle();
 
+        // Resposta de uma sessão anterior nunca pode entrar na memória atual.
+        if (!mounted || Supabase.instance.client.auth.currentUser?.id != user.id) return;
+
         if (response != null && response['areas'] != null) {
           final List<dynamic> dbAreas = response['areas'];
           final Set<String> loadedAreas = dbAreas.map((e) => e.toString()).toSet();
@@ -537,7 +540,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                                       topicCount: topicCount,
                                       onTap: () {
                                         globalCurrentArea = area;
-                                        context.pushNamed(AreaWorkspaceWidget.routeName);
+                                        context.pushNamed(AreaWorkspaceWidget.routeName, queryParameters: {'area': area});
                                       },
                                     ),
                                   );
