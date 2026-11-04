@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/components/button/button_widget.dart';
 import '/components/quick_action/quick_action_widget.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -96,7 +97,11 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
           _selectedAreas.clear();
         }
       } catch (e) {
-        print('Erro ao carregar áreas do Supabase: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao carregar suas áreas. ${friendlyError(e)}'), backgroundColor: Colors.red),
+          );
+        }
       }
 
       safeSetState(() {
@@ -123,7 +128,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao sair da conta: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text('Erro ao sair da conta. ${friendlyError(e)}'), backgroundColor: Colors.red),
       );
     }
   }
@@ -165,7 +170,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao salvar configurações: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text('Erro ao salvar configurações. ${friendlyError(e)}'), backgroundColor: Colors.red),
       );
     } finally {
       safeSetState(() => _isSavingConfig = false);
@@ -484,7 +489,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                                     updateCallback: () => safeSetState(() {}),
                                     child: QuickActionWidget(
                                       icon: Icon(Icons.add_box_rounded, color: FlutterFlowTheme.of(context).primary, size: 20.0),
-                                      label: 'Adicionar Tópico',
+                                      label: 'Novo Tópico',
                                     ),
                                   ),
                                 ),
@@ -502,7 +507,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Módulos Ativos',
+                                'Minhas Áreas',
                                 style: FlutterFlowTheme.of(context).titleMedium.override(
                                       font: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
                                       color: FlutterFlowTheme.of(context).primaryText,
@@ -518,7 +523,7 @@ class _MainMenuWidgetState extends State<MainMenuWidget> {
                                 Padding(
                                   padding: const EdgeInsets.symmetric(vertical: 24.0),
                                   child: Text(
-                                    'Nenhum módulo ativo no momento.\nSelecione as áreas acima e clique em "Salvar".',
+                                    'Nenhuma área selecionada.\nEscolha as áreas acima e clique em "Salvar Configuração".',
                                     textAlign: TextAlign.center,
                                     style: FlutterFlowTheme.of(context).bodyMedium.override(
                                           font: GoogleFonts.inter(),

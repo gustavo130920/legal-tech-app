@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import '/platform/browser_session.dart';
+
 
 String globalCurrentArea = '';
 String? globalSelectedPeca;
@@ -45,6 +47,7 @@ final Map<String, dynamic> globalAreaDatabase = {
 
 /// Apaga da memória os dados do usuário para evitar vazamento entre contas.
 void clearSessionMemory() {
+  clearDrafts();
   globalCurrentArea = '';
   globalSelectedPeca = null;
   globalSavedAreas = {};

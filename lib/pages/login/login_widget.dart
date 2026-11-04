@@ -1,3 +1,4 @@
+import '/core/errors/user_messages.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
@@ -133,11 +134,11 @@ class _LoginWidgetState extends State<LoginWidget> {
       }
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro de Login: ${error.message}'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(error)), backgroundColor: Colors.red),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro inesperado: $e'), backgroundColor: Colors.red),
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
       );
     } finally {
       safeSetState(() => _isLoading = false);
