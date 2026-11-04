@@ -75,9 +75,7 @@ Compile o projeto para Web Release:
 flutter build web --release
 
 
-Crie a regra de roteamento do Netlify (Evita Erro 404 ao atualizar a página):
-
-echo "/*    /index.html   200" > build/web/_redirects
+A regra de roteamento do Netlify (evita Erro 404 ao atualizar a página) já está em web/_redirects e é copiada para o build automaticamente.
 
 
 Compacte a pasta build/web e faça o upload manual do arquivo .zip no painel do Netlify (ou integre via Netlify CLI/GitHub Actions):
