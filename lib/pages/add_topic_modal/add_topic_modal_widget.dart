@@ -1,3 +1,4 @@
+import '/features/drafting/domain/document_composer.dart';
 import '/components/button/button_widget.dart';
 import '/components/form_label/form_label_widget.dart';
 import '/components/placeholder_chip/placeholder_chip_widget.dart';
@@ -5,18 +6,14 @@ import '/flutter_flow/flutter_flow_drop_down.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
 import '/flutter_flow/form_field_controller.dart';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'add_topic_modal_model.dart';
 export 'add_topic_modal_model.dart';
 
 import '../../app_state.dart';
-import '../area_workspace/area_workspace_widget.dart';
 
 class AddTopicModalWidget extends StatefulWidget {
   const AddTopicModalWidget({super.key});
@@ -34,7 +31,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
   late TextEditingController _titleController;
   late TextEditingController _contentController;
-  late TextEditingController _tagsController;
 
   String? _selectedArea;
   String? _selectedPeca;
@@ -50,7 +46,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
     _titleController = TextEditingController();
     _contentController = TextEditingController();
-    _tagsController = TextEditingController();
 
     final availableAreas = globalSavedAreas.isNotEmpty
         ? globalSavedAreas.toList()
@@ -61,22 +56,56 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
 
     final pecasForArea = (globalAreaDatabase[_selectedArea!]['pecas'] as List).cast<String>();
     
-    if (AreaWorkspaceWidget.currentSelectedPeca != null && pecasForArea.contains(AreaWorkspaceWidget.currentSelectedPeca)) {
-      _selectedPeca = AreaWorkspaceWidget.currentSelectedPeca;
+    if (globalSelectedPeca != null && pecasForArea.contains(globalSelectedPeca)) {
+      _selectedPeca = globalSelectedPeca;
     } else {
       _selectedPeca = pecasForArea.isNotEmpty ? pecasForArea.first : null;
     }
     
     _pecaController = FormFieldController<String>(_selectedPeca);
+
+    _loadPecasForArea(_selectedArea!);
   }
 
   @override
   void dispose() {
     _titleController.dispose();
     _contentController.dispose();
-    _tagsController.dispose();
     _model.dispose();
     super.dispose();
+  }
+
+  // A lista vem sempre do banco: só aparecem peças salvas nesta conta.
+  Future<void> _loadPecasForArea(String area) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final response = await Supabase.instance.client
+          .from('pecas')
+          .select('peca_name')
+          .eq('user_id', user.id)
+          .eq('area_name', area)
+          .order('id', ascending: true);
+
+      if (!mounted || _selectedArea != area || Supabase.instance.client.auth.currentUser?.id != user.id) return;
+
+      final pecas = (response as List).map((item) => item['peca_name'].toString()).toList();
+
+      safeSetState(() {
+        globalAreaDatabase[area]['pecas'] = pecas;
+        if (!pecas.contains(_selectedPeca)) {
+          _selectedPeca = pecas.isNotEmpty ? pecas.first : null;
+          _pecaController?.value = _selectedPeca;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao carregar as peças: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _closeModal() {
@@ -105,11 +134,8 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
     safeSetState(() => _isSaving = true);
 
     try {
-      final regex = RegExp(r'\{\{(.*?)\}\}');
-      final matches = regex.allMatches(content);
-      final extractedVars = matches.map((m) => m.group(1)!.trim()).toSet().toList();
-
-      final previewText = content.length > 40 ? '${content.substring(0, 40)}...' : content;
+      final extractedVars = extractVariables(content);
+      final previewText = topicPreview(content);
 
       await Supabase.instance.client.from('topics').insert({
         'user_id': user.id,
@@ -138,7 +164,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
       safeSetState(() {
         _titleController.clear();
         _contentController.clear();
-        _tagsController.clear();
       });
 
       _closeModal();
@@ -291,6 +316,7 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                                       _selectedPeca = newPecasForArea.isNotEmpty ? newPecasForArea.first : null;
                                       _pecaController?.value = _selectedPeca;
                                     });
+                                    _loadPecasForArea(val);
                                   }
                                 },
                                 width: double.infinity, height: 40.0,
@@ -417,23 +443,6 @@ class _AddTopicModalWidgetState extends State<AddTopicModalWidget> {
                               ],
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        wrapWithModel(
-                          model: _model.formLabelModel4, updateCallback: () => safeSetState(() {}),
-                          child: const FormLabelWidget(label: 'Tags de Organização'),
-                        ),
-                        _buildTextInput(
-                          hint: 'Adicione tags separadas por vírgula',
-                          controller: _tagsController,
-                          leadingIcon: Icons.label_rounded,
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) => _saveTopicToSupabase(),
                         ),
                       ],
                     ),

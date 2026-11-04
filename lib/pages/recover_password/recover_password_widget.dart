@@ -2,11 +2,9 @@ import '/components/back_button/back_button_widget.dart';
 import '/components/button/button_widget.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import '/flutter_flow/flutter_flow_widgets.dart';
-import 'dart:ui';
+import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'recover_password_model.dart';
 export 'recover_password_model.dart';
@@ -56,7 +54,7 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
     try {
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
-        redirectTo: 'https://legal-tech-gd.netlify.app/login',
+        redirectTo: '${Uri.base.origin}${UpdatePasswordWidget.routePath}',
       );
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -378,59 +376,6 @@ class _RecoverPasswordWidgetState extends State<RecoverPasswordWidget> {
                                     ),
                                   ),
                                 ].divide(const SizedBox(width: 4.0)),
-                              ),
-                              Divider(
-                                height: 16.0,
-                                thickness: 1.0,
-                                indent: 24.0,
-                                endIndent: 24.0,
-                                color: FlutterFlowTheme.of(context).alternate,
-                              ),
-                              Row(
-                                mainAxisSize: MainAxisSize.max,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Suporte',
-                                    style: FlutterFlowTheme.of(context).labelSmall.override(
-                                          font: GoogleFonts.inter(),
-                                          color: FlutterFlowTheme.of(context).secondaryText,
-                                        ),
-                                  ),
-                                  Container(
-                                    width: 4.0,
-                                    height: 4.0,
-                                    decoration: BoxDecoration(
-                                      color: FlutterFlowTheme.of(context).alternate,
-                                      borderRadius: BorderRadius.circular(9999.0),
-                                      shape: BoxShape.rectangle,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Privacidade',
-                                    style: FlutterFlowTheme.of(context).labelSmall.override(
-                                          font: GoogleFonts.inter(),
-                                          color: FlutterFlowTheme.of(context).secondaryText,
-                                        ),
-                                  ),
-                                  Container(
-                                    width: 4.0,
-                                    height: 4.0,
-                                    decoration: BoxDecoration(
-                                      color: FlutterFlowTheme.of(context).alternate,
-                                      borderRadius: BorderRadius.circular(9999.0),
-                                      shape: BoxShape.rectangle,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Termos',
-                                    style: FlutterFlowTheme.of(context).labelSmall.override(
-                                          font: GoogleFonts.inter(),
-                                          color: FlutterFlowTheme.of(context).secondaryText,
-                                        ),
-                                  ),
-                                ].divide(const SizedBox(width: 24.0)),
                               ),
                             ].divide(const SizedBox(height: 16.0)),
                           ),

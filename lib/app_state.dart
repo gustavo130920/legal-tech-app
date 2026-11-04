@@ -1,46 +1,58 @@
 import 'package:flutter/services.dart';
 
 
-String globalCurrentArea = 'Trabalhista';
+String globalCurrentArea = '';
+String? globalSelectedPeca;
 Set<String> globalSavedAreas = {};
 
 final Map<String, dynamic> globalAreaDatabase = {
   'Trabalhista': {
     'title': 'Área Trabalhista',
-    'pecas': ['PETIÇÃO INICIAL TRABALHISTA'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Civil': {
     'title': 'Área Civil',
-    'pecas': ['PETIÇÃO INICIAL CÍVEL'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Previdenciário': {
     'title': 'Área Previdenciária',
-    'pecas': ['AÇÃO PREVIDENCIÁRIA'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Penal': {
     'title': 'Área Penal',
-    'pecas': ['DEFESA PRÉVIA CRIMINAL'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Tributário': {
     'title': 'Área Tributária',
-    'pecas': ['AÇÃO ANULATÓRIA FISCAL'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Empresarial': {
     'title': 'Área Empresarial',
-    'pecas': ['AÇÃO SOCIETÁRIA'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   },
   'Contratos': {
     'title': 'Elaboração de Contratos',
-    'pecas': ['INSTRUMENTO PARTICULAR DE CONTRATO'],
+    'pecas': <String>[],
     'topics': <Map<String, dynamic>>[]
   }
 };
+
+/// Apaga da memória os dados do usuário para evitar vazamento entre contas.
+void clearSessionMemory() {
+  globalCurrentArea = '';
+  globalSelectedPeca = null;
+  globalSavedAreas = {};
+  globalAreaDatabase.forEach((key, value) {
+    value['pecas'] = <String>[];
+    value['topics'] = <Map<String, dynamic>>[];
+  });
+}
 
 class CpfInputFormatter extends TextInputFormatter {
   @override

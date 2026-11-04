@@ -1,17 +1,26 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility that Flutter provides. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:legal_flow/main.dart';
+import 'package:legal_flow/core/auth/auth_redirect.dart';
+import 'package:legal_flow/flutter_flow/nav/nav.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(MyApp());
+  testWidgets('o app compila com as rotas e o estado de autenticação', (tester) async {
+    final notifier = AppStateNotifier.instance;
+    await tester.pumpWidget(
+      ListenableBuilder(
+        listenable: notifier,
+        builder: (context, _) => Directionality(
+          textDirection: TextDirection.ltr,
+          child: Text(resolveAuthRedirect(
+                path: '/mainMenu',
+                isLoggedIn: false,
+                isPasswordRecovery: notifier.isPasswordRecovery,
+              ) ??
+              ''),
+        ),
+      ),
+    );
+
+    expect(find.text('/login'), findsOneWidget);
   });
 }

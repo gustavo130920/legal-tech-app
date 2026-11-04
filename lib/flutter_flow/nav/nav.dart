@@ -1,16 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:page_transition/page_transition.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '/main.dart';
-import '/flutter_flow/flutter_flow_theme.dart';
-import '/flutter_flow/lat_lng.dart';
-import '/flutter_flow/place.dart';
+import '/app_state.dart';
+import '/core/auth/auth_redirect.dart';
 import '/flutter_flow/flutter_flow_util.dart';
-import 'serialization_util.dart';
 
 import '/index.dart';
 
@@ -29,17 +26,48 @@ class AppStateNotifier extends ChangeNotifier {
 
   bool showSplashImage = true;
 
+  bool isPasswordRecovery = false;
+  String? _memoryOwnerId;
+
   void stopShowingSplashImage() {
     showSplashImage = false;
+    notifyListeners();
+  }
+
+  /// Reage a toda mudança de sessão, inclusive saída em outra aba ou expiração.
+  void handleAuthEvent(AuthChangeEvent event, {String? userId}) {
+    final accountChanged = userId != null && _memoryOwnerId != null && userId != _memoryOwnerId;
+    if (accountChanged) clearSessionMemory();
+    if (userId != null) _memoryOwnerId = userId;
+
+    if (event == AuthChangeEvent.tokenRefreshed && !accountChanged) return;
+
+    if (event == AuthChangeEvent.signedOut) {
+      clearSessionMemory();
+      _memoryOwnerId = null;
+      isPasswordRecovery = false;
+    } else if (event == AuthChangeEvent.passwordRecovery) {
+      isPasswordRecovery = true;
+    }
+    notifyListeners();
+  }
+
+  void finishPasswordRecovery() {
+    isPasswordRecovery = false;
     notifyListeners();
   }
 }
 
 GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
       initialLocation: '/',
-      debugLogDiagnostics: true,
+      debugLogDiagnostics: kDebugMode,
       refreshListenable: appStateNotifier,
       navigatorKey: appNavigatorKey,
+      redirect: (context, state) => resolveAuthRedirect(
+        path: state.uri.path,
+        isLoggedIn: Supabase.instance.client.auth.currentSession != null,
+        isPasswordRecovery: appStateNotifier.isPasswordRecovery,
+      ),
       errorBuilder: (context, state) => LoginWidget(),
       routes: [
         FFRoute(
@@ -63,6 +91,11 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
           builder: (context, params) => RecoverPasswordWidget(),
         ),
         FFRoute(
+          name: UpdatePasswordWidget.routeName,
+          path: UpdatePasswordWidget.routePath,
+          builder: (context, params) => UpdatePasswordWidget(),
+        ),
+        FFRoute(
           name: MainMenuWidget.routeName,
           path: MainMenuWidget.routePath,
           builder: (context, params) => MainMenuWidget(),
@@ -75,7 +108,9 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
         FFRoute(
           name: AreaWorkspaceWidget.routeName,
           path: AreaWorkspaceWidget.routePath,
-          builder: (context, params) => AreaWorkspaceWidget(),
+          builder: (context, params) => AreaWorkspaceWidget(
+            area: params.getParam('area', ParamType.String),
+          ),
         )
       ].map((r) => r.toRoute(appStateNotifier)).toList(),
     );

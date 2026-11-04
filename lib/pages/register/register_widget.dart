@@ -1,13 +1,11 @@
-import '/components/social_button/social_button_widget.dart';
+import '/core/auth/password_policy.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
-import 'dart:ui';
 import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'register_model.dart';
 export 'register_model.dart';
@@ -131,35 +129,10 @@ class _RegisterWidgetState extends State<RegisterWidget> {
       return;
     }
 
-    // Regras de Complexidade de Senha
-    if (password.length < 8) {
+    final passwordProblem = validatePassword(password);
+    if (passwordProblem != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Segurança: A senha deve ter pelo menos 8 caracteres.'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-    if (!password.contains(RegExp(r'[A-Z]'))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 letra maiúscula.'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-    if (!password.contains(RegExp(r'[a-z]'))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 letra minúscula.'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-    if (!password.contains(RegExp(r'[0-9]'))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 número.'), backgroundColor: Colors.orange),
-      );
-      return;
-    }
-    // Verifica se há pelo menos um caractere que NÃO seja letra ou número
-    if (!password.contains(RegExp(r'[^a-zA-Z0-9]'))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Segurança: A senha deve conter pelo menos 1 caractere especial (ex: @, #, !, &, etc).'), backgroundColor: Colors.orange),
+        SnackBar(content: Text(passwordProblem), backgroundColor: Colors.orange),
       );
       return;
     }
@@ -182,12 +155,14 @@ class _RegisterWidgetState extends State<RegisterWidget> {
 
       if (response.user != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Conta criada com sucesso! Faça login para continuar.'),
+          SnackBar(
+            content: Text(response.session != null
+                ? 'Conta criada com sucesso!'
+                : 'Conta criada com sucesso! Faça login para continuar.'),
             backgroundColor: Colors.green,
           ),
         );
-        context.pushNamed(LoginWidget.routeName);
+        context.goNamed(response.session != null ? MainMenuWidget.routeName : LoginWidget.routeName);
       }
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -347,26 +322,6 @@ class _RegisterWidgetState extends State<RegisterWidget> {
                                             ),
                                         elevation: 0.0,
                                         borderRadius: BorderRadius.circular(8.0),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16.0),
-                                    Row(
-                                      children: [
-                                        Expanded(child: Divider(color: FlutterFlowTheme.of(context).alternate)),
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                          child: Text('OU', style: FlutterFlowTheme.of(context).labelSmall),
-                                        ),
-                                        Expanded(child: Divider(color: FlutterFlowTheme.of(context).alternate)),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 16.0),
-                                    wrapWithModel(
-                                      model: _model.socialButtonModel,
-                                      updateCallback: () => safeSetState(() {}),
-                                      child: const SocialButtonWidget(
-                                        icon: 'https://cdn.simpleicons.org/google/111827.svg',
-                                        label: 'Cadastrar com Google',
                                       ),
                                     ),
                                     Padding(
