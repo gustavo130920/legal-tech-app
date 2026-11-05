@@ -1,4 +1,5 @@
 import '/core/errors/user_messages.dart';
+import '/components/test_environment_notice.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
@@ -210,6 +211,8 @@ class _LoginWidgetState extends State<LoginWidget> {
                                 ].divide(const SizedBox(height: 16.0)),
                               ),
                             ),
+                            const TestEnvironmentNotice(),
+                            const SizedBox(height: 16.0),
                             Container(
                               decoration: BoxDecoration(
                                 color: FlutterFlowTheme.of(context).secondaryBackground,
