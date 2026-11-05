@@ -1,4 +1,5 @@
 import '/components/quick_action_card_widget.dart';
+import '/components/test_environment_notice.dart';
 import '/core/errors/user_messages.dart';
 import '/core/legal/cnj_number.dart';
 import '/features/drafting/domain/document_composer.dart';
@@ -1378,6 +1379,7 @@ class _AreaWorkspaceWidgetState extends State<AreaWorkspaceWidget> {
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const TestEnvironmentNotice(),
             Expanded(child: _buildBody()),
             _buildFooter(),
           ],
